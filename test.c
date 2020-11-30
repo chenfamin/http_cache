@@ -6,7 +6,6 @@
 
 int main()
 {
-    int b;
 	int a = 0;
 	a = 10>0;
 	printf("a=%d\n", a);
