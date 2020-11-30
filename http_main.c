@@ -1,4 +1,5 @@
 #include "http.h"
+#include "http_log.h"
 #include "http_dns.h"
 #include "http_session.h"
 

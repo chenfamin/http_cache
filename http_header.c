@@ -1,3 +1,5 @@
+#include "http.h"
+#include "http_log.h"
 #include "http_header.h"
 
 #define ISDIGIT(c)           ((c) >= '0' && (c) <= '9')

@@ -175,17 +175,7 @@ char *http_strdup(const char *s);
 void strlow(uint8_t *dst, uint8_t *src, size_t n);
 const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
 
-#define LOG_ERROR 0
-#define LOG_WARNING 1
-#define LOG_INFO 2
-#define LOG_DEBUG 3
-
-void log_printf(int level, const char *file, int line, const char *function, const char *fmt, ...);
-#define LOG(level, arg...) log_printf(level, __FILE__, __LINE__, __FUNCTION__, ##arg)
-//#define LOG(level, arg...) (void)0
-
-#endif
-
 struct epoll_thread_t* epoll_thread_select();
 extern int want_exit;
 
+#endif
