@@ -2025,12 +2025,9 @@ void log_printf(int level, const char *file, int line, const char *function, con
 	va_list argptr;
 	time_t current;
 	struct tm tm;;
-	char timespan[64];
 	current = time(NULL);
 	localtime_r(&current, &tm);
-	//strftime(timespan, sizeof(timespan), "%Y/%m/%d %H:%M:%S", &tm);
-	snprintf(timespan, sizeof(timespan), "%d/%02d/%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-	fprintf(stdout, "%s %s|%d|%s: ", timespan, file, line, function);
+	fprintf(stdout, "%d/%02d/%02d %02d:%02d:%02d %s|%d|%s: ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, file, line, function);
 	va_start(argptr, fmt);
 	vfprintf(stdout, fmt, argptr);
 	va_end(argptr);
