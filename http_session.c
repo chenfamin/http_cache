@@ -3,7 +3,6 @@
 #include "http_dns.h"
 #include "http_header.h"
 #include "http_session.h"
-
 struct http_request_t {
 	enum http_method method;
 	int http_major;
@@ -36,7 +35,6 @@ struct cache_t {
 	struct rb_node rb_node;
 	struct epoll_thread_t *epoll_thread;
 	int lock;
-
 	struct http_reply_t *http_reply;
 };
 
@@ -71,6 +69,7 @@ struct http_server_t {
 };
 
 struct http_session_t {
+	struct list_head_t node;// for epoll_thread->http_session_list
 	struct http_request_t http_request;
 	struct mem_list_t post_list;
 	struct http_client_t *http_client;
@@ -869,6 +868,7 @@ static void http_client_accept(struct connection_t *connection)
 
 static struct http_session_t* http_session_create(struct connection_t *connection)
 {
+	struct epoll_thread_t *epoll_thread = connection->epoll_thread;
 	struct http_session_t *http_session = NULL;
 	struct http_client_t *http_client = NULL;
 	http_session = http_malloc(sizeof(struct http_session_t));
@@ -887,10 +887,11 @@ static struct http_session_t* http_session_create(struct connection_t *connectio
 
 	http_session->http_client = http_client;
 	mem_list_init(&http_session->body_list);
-	http_session->epoll_thread = connection->epoll_thread;
+	http_session->epoll_thread = epoll_thread;
 
 	connection->arg = http_session;
 	connection_read_enable(connection, http_client_read_header);
+	list_add_tail(&http_session->node, &epoll_thread->http_session_list);
 	return http_session;
 }
 
@@ -907,6 +908,7 @@ static void http_session_free(struct http_session_t *http_session)
 	}
 	mem_list_clean(&http_session->post_list);
 	mem_list_clean(&http_session->body_list);
+	list_del(&http_session->node);
 	http_free(http_session);
 }
 

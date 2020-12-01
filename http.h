@@ -96,6 +96,7 @@ struct epoll_thread_t {
 	struct list_head_t listen_list;
 	struct list_head_t ready_list;
 	struct list_head_t free_list;
+	struct list_head_t http_session_list;
 	void *dns_session;
 };
 
@@ -139,7 +140,6 @@ void connection_close(struct connection_t *connection, int delay_free);
 
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
-
 
 void string_init_size(struct string_t *string, size_t size);
 void string_init_str(struct string_t *string, const char *s);

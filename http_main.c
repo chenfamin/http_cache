@@ -27,6 +27,7 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 	INIT_LIST_HEAD(&epoll_thread->listen_list);
 	INIT_LIST_HEAD(&epoll_thread->ready_list);
 	INIT_LIST_HEAD(&epoll_thread->free_list);
+	INIT_LIST_HEAD(&epoll_thread->http_session_list);
 	epoll_thread->epoll_fd = epoll_create(MAX_EPOLL_FD);
 	if (epoll_thread->epoll_fd < 0) {
 		LOG(LOG_ERROR, "%s epoll_create error:%s\n", epoll_thread->name, strerror(errno));
@@ -101,6 +102,7 @@ void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 	}
 	assert(list_empty(&epoll_thread->ready_list));
 	assert(list_empty(&epoll_thread->free_list));
+	assert(list_empty(&epoll_thread->http_session_list));
 	close(epoll_thread->epoll_fd);
 }
 
