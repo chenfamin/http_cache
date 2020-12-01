@@ -58,7 +58,7 @@ static void dns_cache_free(struct dns_cache_t *dns_cache);
 static void dns_query_read(struct connection_t *connection);
 static void dns_query_parse_data(struct dns_query_t *dns_query, struct rfc1035_rr_t *answers, int n);
 static void dns_query_write(struct connection_t *connection);
-static void dns_query_create(struct epoll_thread_t *epoll_thread, const char *host, struct continuation_t *continuation);
+static void dns_query_create(struct dns_session_t *dns_session, const char *host, struct continuation_t *continuation);
 static void dns_query_free(struct dns_query_t *dns_query);
 static int rfc1035NamePack(char *buf, size_t sz, const char *name);
 static int rfc1035LabelPack(char *buf, size_t sz, const char *label);
@@ -355,7 +355,7 @@ static void dns_query_parse_data(struct dns_query_t *dns_query, struct rfc1035_r
 	dns_cache_table_unlock();
 }
 
-void epoll_thread_dns_connection_init(struct epoll_thread_t *epoll_thread)
+struct dns_session_t* dns_session_create(struct epoll_thread_t *epoll_thread)
 {
 	struct connection_t *connection = NULL;
 	struct dns_session_t *dns_session = NULL;
@@ -365,13 +365,12 @@ void epoll_thread_dns_connection_init(struct epoll_thread_t *epoll_thread)
 	if (fd < 0) {
 		LOG(LOG_ERROR, "%s dns socket fd=%d error:%s\n", epoll_thread->name, fd, strerror(errno));
 		assert(0);
-		return;
+		return NULL;
 	}
 	dns_session = http_malloc(sizeof(struct dns_session_t));
 	memset(dns_session, 0, sizeof(struct dns_session_t));
 	INIT_LIST_HEAD(&dns_session->write_list);
 	INIT_LIST_HEAD(&dns_session->wait_list);
-	dns_session->epoll_thread = epoll_thread;
 
 	connection = http_malloc(sizeof(struct connection_t));
 	memset(connection, 0, sizeof(struct connection_t));
@@ -383,14 +382,15 @@ void epoll_thread_dns_connection_init(struct epoll_thread_t *epoll_thread)
 	((struct sockaddr_in *)&connection->peer_addr)->sin_addr.s_addr = inet_addr("114.114.114.114");
 	connection->arg = dns_session;
 	connection->epoll_thread = epoll_thread;
-	epoll_thread->dns_connection = connection;
 	connection_read_enable(connection, dns_query_read);
+
+	dns_session->epoll_thread = epoll_thread;
+	dns_session->connection = connection;
+	return dns_session;
 }
 
-void epoll_thread_dns_connection_query(struct epoll_thread_t *epoll_thread, const char *host, struct continuation_t *continuation)
+void dns_session_query(struct dns_session_t *dns_session, const char *host, struct continuation_t *continuation)
 {
-	struct connection_t *connection = epoll_thread->dns_connection;
-	struct dns_session_t *dns_session = connection->arg;
 	struct dns_query_t *dns_query = NULL;
 	struct dns_cache_t *dns_cache = NULL;
 	struct dns_info_t dns_info = {0};
@@ -433,13 +433,11 @@ void epoll_thread_dns_connection_query(struct epoll_thread_t *epoll_thread, cons
 			return;
 		}
 	}
-	dns_query_create(epoll_thread, host, continuation);
+	dns_query_create(dns_session, host, continuation);
 }
 
-void epoll_thread_dns_connection_close(struct epoll_thread_t *epoll_thread)
+void dns_session_close(struct dns_session_t *dns_session)
 {
-	struct connection_t *connection = epoll_thread->dns_connection;
-	struct dns_session_t *dns_session = connection->arg;
 	struct dns_query_t *dns_query = NULL;
 	while (!list_empty(&dns_session->write_list)) {
 		dns_query = d_list_head(&dns_session->write_list, struct dns_query_t, node);
@@ -449,15 +447,12 @@ void epoll_thread_dns_connection_close(struct epoll_thread_t *epoll_thread)
 		dns_query = d_list_head(&dns_session->wait_list, struct dns_query_t, node);
 		dns_query_free(dns_query);
 	}
-	connection_close(connection, CONNECTION_FREE_NOW);
+	connection_close(dns_session->connection, CONNECTION_FREE_NOW);
 	http_free(dns_session);
-	epoll_thread->dns_connection = NULL;
 }
 
-static void dns_query_create(struct epoll_thread_t *epoll_thread, const char *host, struct continuation_t *continuation)
+static void dns_query_create(struct dns_session_t *dns_session, const char *host, struct continuation_t *continuation)
 {
-	struct connection_t *connection = epoll_thread->dns_connection;
-	struct dns_session_t *dns_session = connection->arg;
 	struct dns_query_t *dns_query = NULL;
 	char *buf = NULL;
 	int size = 1460;
@@ -508,7 +503,7 @@ static void dns_query_create(struct epoll_thread_t *epoll_thread, const char *ho
 	INIT_LIST_HEAD(&dns_query->client_list);
 	list_add_tail(&continuation->node, &dns_query->client_list);
 	list_add_tail(&dns_query->node, &dns_session->write_list);
-	connection_write_enable(connection, dns_query_write);
+	connection_write_enable(dns_session->connection, dns_query_write);
 }
 
 static void dns_query_free(struct dns_query_t *dns_query)

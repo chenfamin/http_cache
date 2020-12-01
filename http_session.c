@@ -1408,7 +1408,7 @@ static void http_server_create(struct http_session_t *http_session, struct http_
 	http_server->continuation.callback_data = http_session;
 	http_server->continuation.callback = http_server_connect;
 	http_server->continuation.buf = &http_server->dns_info;
-	epoll_thread_dns_connection_query(http_session->epoll_thread, string_buf(&host), &http_server->continuation);
+	dns_session_query(http_session->epoll_thread->dns_session, string_buf(&host), &http_server->continuation);
 	string_clean(&host);
 }
 

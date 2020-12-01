@@ -96,7 +96,7 @@ struct epoll_thread_t {
 	struct list_head_t listen_list;
 	struct list_head_t ready_list;
 	struct list_head_t free_list;
-	void *dns_connection;
+	void *dns_session;
 };
 
 struct aio_thread_t {

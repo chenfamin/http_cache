@@ -40,7 +40,7 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 	   socket_non_block(event_pipe[0]);
 	   socket_non_block(event_pipe[1]);
 	 */
-	epoll_thread_dns_connection_init(epoll_thread);
+	epoll_thread->dns_session = dns_session_create(epoll_thread);
 }
 
 void* epoll_thread_loop(void *arg)
@@ -90,8 +90,9 @@ void* epoll_thread_loop(void *arg)
 void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 {
 	struct connection_t *connection = NULL;
-	if (epoll_thread->dns_connection) {
-		epoll_thread_dns_connection_close(epoll_thread);
+	if (epoll_thread->dns_session) {
+		dns_session_close(epoll_thread->dns_session);
+		epoll_thread->dns_session = NULL;
 	}
 	while (!list_empty(&epoll_thread->listen_list)) {
 		connection = d_list_head(&epoll_thread->listen_list, struct connection_t, node);

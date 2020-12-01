@@ -28,6 +28,7 @@ struct dns_cache_t {
 };
 
 struct dns_session_t {
+	struct connection_t *connection;
 	uint16_t id;
 	struct list_head_t write_list;
 	struct list_head_t wait_list;
@@ -51,8 +52,8 @@ void dns_cache_table_clean();
 void dns_info_copy(struct dns_info_t *dest, const struct dns_info_t *src);
 void dns_info_clean(struct dns_info_t *dns_info);
 
-void epoll_thread_dns_connection_init(struct epoll_thread_t *epoll_thread);
-void epoll_thread_dns_connection_query(struct epoll_thread_t *epoll_thread, const char *host, struct continuation_t *continuation);
-void epoll_thread_dns_connection_close(struct epoll_thread_t *epoll_thread);
+struct dns_session_t* dns_session_create(struct epoll_thread_t *epoll_thread);
+void dns_session_query(struct dns_session_t *dns_session, const char *host, struct continuation_t *continuation);
+void dns_session_close(struct dns_session_t *dns_session);
 
 #endif
