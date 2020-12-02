@@ -4,7 +4,7 @@ CFLAGS += -g -Wall
 LDFLAGS += -lpthread
 #LDFLAGS += -static
 
-OBJECTS = http_main.c http_log.c http_session.c http_dns.c http_parser.c http_header.c rbtree.c
+OBJECTS = http_main.c http_log.c http_connection.c http_session.c http_dns.c http_parser.c http_header.c rbtree.c
 
 HFILES = 
 

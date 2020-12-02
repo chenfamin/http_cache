@@ -1,5 +1,6 @@
 #include "http.h"
 #include "http_log.h"
+#include "http_connection.h"
 #include "http_dns.h"
 
 #define RFC1035_TYPE_A 1
