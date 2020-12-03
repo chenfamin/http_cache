@@ -89,24 +89,46 @@ struct epoll_thread_t {
 	char name[64];
 	int64_t current_time;
 	int epoll_fd;
+	void *pipe_read_connection;
+	int pipe_write_fd;
+	int signal;
+
 	int64_t epoll_add_num;
 	int64_t epoll_mod_num;
 	int64_t epoll_del_num;
 	int64_t epoll_wait_num;
+
 	struct list_head_t listen_list;
 	struct list_head_t ready_list;
 	struct list_head_t free_list;
 	struct list_head_t http_session_list;
+	struct list_head_t done_list;
+	pthread_mutex_t done_mutex;
 	void *dns_session;
 };
 
 struct aio_thread_t {
 	pthread_t tid;
 	char name[64];
-	struct list_head_t aio_list;
-	pthread_mutex_t aio_mutex;
-	pthread_cond_t aio_cond;
 };
+
+struct aio_t {
+	struct list_head_t node;
+	int fd;
+	struct iovec iovecs[MAX_IOVEC];
+	int count;
+	void (*aio_exec)(struct aio_t *aio);
+	void (*aio_done)(struct aio_t *aio);
+	struct epoll_thread_t *epoll_thread;
+};
+
+struct aio_list_t {
+	struct list_head_t list;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+};
+
+
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
 
@@ -145,5 +167,6 @@ void strlow(uint8_t *dst, uint8_t *src, size_t n);
 const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
 
 struct epoll_thread_t* epoll_thread_select();
+void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread);
 
 #endif

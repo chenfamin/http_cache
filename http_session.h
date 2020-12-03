@@ -41,16 +41,6 @@ struct cache_t {
 	int header_size;
 };
 
-struct aio_t {
-	struct list_head_t node;
-	int fd;
-	struct iovec iovecs[MAX_IOVEC];
-	int count;
-	void (*aio_exec)(struct aio_t *aio);
-	void (*aio_done)(struct aio_t *aio);
-	struct epoll_thread_t *epoll_thread;
-};
-
 struct http_cache_client_t {
 	struct cache_t *cache;
 	int64_t body_offset;
