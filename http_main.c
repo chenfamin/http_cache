@@ -8,14 +8,15 @@ static struct epoll_thread_t *epoll_threads = NULL;
 static struct aio_thread_t *aio_threads = NULL;
 static int epoll_threads_num = 2;
 static int aio_threads_num = 4;
-int want_exit = 0;
+static int epoll_thread_exit = 0;
+static int aio_thread_exit = 0;
 
 static void sig_int(int sig);
 static void sig_pipe(int sig);
 
 static void sig_int(int sig)
 {
-	want_exit = 1;
+	epoll_thread_exit = 1;
 }
 
 static void sig_pipe(int sig)
@@ -45,6 +46,29 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 	epoll_thread->dns_session = dns_session_create(epoll_thread);
 }
 
+void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
+{
+	struct connection_t *connection = NULL;
+	if (epoll_thread->dns_session) {
+		dns_session_close(epoll_thread->dns_session);
+		epoll_thread->dns_session = NULL;
+	}
+	while (!list_empty(&epoll_thread->listen_list)) {
+		connection = d_list_head(&epoll_thread->listen_list, struct connection_t, node);
+		list_del(&connection->node);
+		connection_close(connection, CONNECTION_FREE_NOW);
+	}
+	assert(list_empty(&epoll_thread->ready_list));
+	assert(list_empty(&epoll_thread->free_list));
+	assert(list_empty(&epoll_thread->http_session_list));
+	close(epoll_thread->epoll_fd);
+}
+
+struct epoll_thread_t* epoll_thread_select()
+{
+	return epoll_threads + 0;
+}
+
 void* epoll_thread_loop(void *arg)
 {
 	struct epoll_thread_t *epoll_thread = arg;
@@ -53,7 +77,7 @@ void* epoll_thread_loop(void *arg)
 	struct epoll_event event_result[MAX_EPOLL_FD];
 	int nfds = 0;
 	int i = 0;
-	while (!want_exit) {
+	while (1) {
 		INIT_LIST_HEAD(&ready_list);
 		list_splice_init(&epoll_thread->ready_list, &ready_list);
 		nfds = epoll_wait(epoll_thread->epoll_fd, event_result, MAX_EPOLL_FD, list_empty(&ready_list)? 100:0);
@@ -85,44 +109,33 @@ void* epoll_thread_loop(void *arg)
 			list_del(&connection->node);
 			http_free(connection);
 		}
+		if (epoll_thread_exit) {
+			if (list_empty(&epoll_thread->http_session_list)) {
+				LOG(LOG_WARNING, "%s epoll_fd=%d exit\n", epoll_thread->name, epoll_thread->epoll_fd);
+				break;
+			}
+		}
 	}
 	return NULL;
 }
 
-void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
-{
-	struct connection_t *connection = NULL;
-	if (epoll_thread->dns_session) {
-		dns_session_close(epoll_thread->dns_session);
-		epoll_thread->dns_session = NULL;
-	}
-	while (!list_empty(&epoll_thread->listen_list)) {
-		connection = d_list_head(&epoll_thread->listen_list, struct connection_t, node);
-		list_del(&connection->node);
-		connection_close(connection, CONNECTION_FREE_NOW);
-	}
-	assert(list_empty(&epoll_thread->ready_list));
-	assert(list_empty(&epoll_thread->free_list));
-	assert(list_empty(&epoll_thread->http_session_list));
-	close(epoll_thread->epoll_fd);
-}
-
-struct epoll_thread_t* epoll_thread_select()
-{
-	return epoll_threads + 0;
-}
-
 void aio_thread_init(struct aio_thread_t *aio_thread)
 {
+	INIT_LIST_HEAD(&aio_thread->aio_list);
+	pthread_mutex_init(&aio_thread->aio_mutex, NULL);
+	pthread_cond_init(&aio_thread->aio_cond, NULL);
+}
+
+void aio_thread_clean(struct aio_thread_t *aio_thread)
+{
+	assert(list_empty(&aio_thread->aio_list));
+	pthread_mutex_destroy(&aio_thread->aio_mutex);
+	pthread_cond_destroy(&aio_thread->aio_cond);
 }
 
 void* aio_thread_loop(void *arg)
 {
 	return NULL;
-}
-
-void aio_thread_clean(struct aio_thread_t *aio_thread)
-{
 }
 
 int main()
@@ -135,8 +148,8 @@ int main()
 		LOG(LOG_ERROR, "regist SIGPIPE error\n");
 	}
 	LOG(LOG_INFO, "pid=%d\n", getpid());
-	dns_cache_table_init();
-	cache_table_init();
+	dns_cache_table_create();
+	cache_table_create();
 
 	epoll_threads = http_malloc(sizeof(struct epoll_thread_t) * epoll_threads_num);
 	memset(epoll_threads, 0, sizeof(struct epoll_thread_t) * epoll_threads_num);
@@ -170,6 +183,7 @@ int main()
 	for (i = 0; i < epoll_threads_num; i++) {
 		pthread_join(epoll_threads[i].tid, NULL);
 	}
+	aio_thread_exit = 1;
 	for (i = 0; i < aio_threads_num; i++) {
 		pthread_join(aio_threads[i].tid, NULL);
 	}
@@ -184,7 +198,7 @@ int main()
 	http_free(epoll_threads);
 	http_free(aio_threads);
 
-	dns_cache_table_clean();
-	cache_table_clean();
+	dns_cache_table_free();
+	cache_table_free();
 	return 0;
 }

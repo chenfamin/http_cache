@@ -103,6 +103,9 @@ struct epoll_thread_t {
 struct aio_thread_t {
 	pthread_t tid;
 	char name[64];
+	struct list_head_t aio_list;
+	pthread_mutex_t aio_mutex;
+	pthread_cond_t aio_cond;
 };
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
@@ -142,6 +145,5 @@ void strlow(uint8_t *dst, uint8_t *src, size_t n);
 const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
 
 struct epoll_thread_t* epoll_thread_select();
-extern int want_exit;
 
 #endif

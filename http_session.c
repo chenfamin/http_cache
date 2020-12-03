@@ -4,104 +4,8 @@
 #include "http_dns.h"
 #include "http_header.h"
 #include "http_session.h"
-struct http_request_t {
-	enum http_method method;
-	int http_major;
-	int http_minor;
-	struct string_t url;
-	struct http_header_t header;
-	struct http_range_t *range;
-	int64_t content_length;
-	enum parser_header_state parse_state;
-};
 
-struct http_reply_t {
-	int status_code;
-	int http_major;
-	int http_minor;
-	struct http_header_t header;
-	int64_t content_length;
-	enum parser_header_state parse_state;
-};
-
-struct cache_table_t {
-	pthread_mutex_t mutex;
-	struct rb_root rb_root;
-	struct list_head_t list;
-	int64_t count;
-};
-
-struct cache_t {
-	char *key;
-	struct rb_node rb_node;
-	struct epoll_thread_t *epoll_thread;
-	int lock;
-
-	struct http_reply_t *http_reply;
-	int header_size;
-};
-
-struct aio_t {
-	struct list_head_t node;
-	int fd;
-	struct iovec iovecs[MAX_IOVEC];
-	int count;
-	void (*aio_exec)(struct aio_t *aio);
-	void (*aio_done)(struct aio_t *aio);
-	struct epoll_thread_t *epoll_thread;
-};
-
-struct http_cache_client_t {
-	struct cache_t *cache;
-	int64_t body_offset;
-	int64_t body_write_size;
-	struct aio_t aio;
-	int busy;
-};
-
-struct http_client_t {
-	struct connection_t *connection;
-	http_parser parser;
-	int64_t post_current_size;
-	int64_t post_expect_size;
-	int keep_alive;
-	struct string_t reply_header; 
-	int64_t reply_send_size; 
-	int64_t body_offset;
-	int64_t body_expect_size;
-	struct continuation_t continuation;
-};
-
-struct http_server_t {
-	struct connection_t *connection;
-	struct http_range_t *range;
-	struct string_t request_header;
-	int64_t request_send_size;
-	http_parser parser;
-	int chunked;
-	struct http_chunked_t http_chunked;
-	struct dns_info_t dns_info;
-	uint16_t port;
-	int keep_alive;
-	int64_t body_offset;
-	int64_t body_current_size;
-	int64_t body_expect_size;
-	struct continuation_t continuation;
-};
-
-struct http_session_t {
-	struct list_head_t node;// for epoll_thread->http_session_list
-	struct http_request_t http_request;
-	struct mem_list_t post_list;
-	struct http_client_t *http_client;
-	struct http_cache_client_t *http_cache_client;
-	struct http_server_t *http_server;
-
-	struct mem_list_t body_list;
-	struct epoll_thread_t *epoll_thread;
-};
-
-struct cache_table_t cache_table;
+static struct cache_table_t *cache_table = NULL;
 
 static int socket_listen(const char *host, uint16_t port, int family);
 static int request_on_message_begin(http_parser *hp);
@@ -1819,27 +1723,41 @@ static void http_cache_client_close(struct http_session_t *http_session)
 	}
 }
 
-void cache_table_init()
+void cache_table_create()
 {
-	memset(&cache_table, 0, sizeof(struct cache_table_t));
-	pthread_mutex_init(&cache_table.mutex, NULL);
-	cache_table.rb_root = RB_ROOT;
-	INIT_LIST_HEAD(&cache_table.list);
+	cache_table = http_malloc(sizeof(struct cache_table_t));
+	memset(cache_table, 0, sizeof(struct cache_table_t));
+	pthread_mutex_init(&cache_table->mutex, NULL);
+	cache_table->rb_root = RB_ROOT;
+	INIT_LIST_HEAD(&cache_table->list);
+}
+
+void cache_table_free()
+{
+	struct cache_t *cache = NULL;
+	struct rb_node *node = NULL;
+	while ((node = rb_first(&cache_table->rb_root))) {
+		cache = rb_entry(node, struct cache_t, rb_node);
+		cache_table_erase(cache);
+		cache_free(cache);
+	}
+	http_free(cache_table);
+	cache_table = NULL;
 }
 
 static int cache_table_lock()
 {
-	return pthread_mutex_lock(&cache_table.mutex);
+	return pthread_mutex_lock(&cache_table->mutex);
 }
 
 static int cache_table_unlock()
 {
-	return pthread_mutex_unlock(&cache_table.mutex);
+	return pthread_mutex_unlock(&cache_table->mutex);
 }
 
 static struct cache_t* cache_table_lookup(const void *key)
 {
-	struct rb_node *node = cache_table.rb_root.rb_node;
+	struct rb_node *node = cache_table->rb_root.rb_node;
 	struct cache_t *cache = NULL;
 	int cmp = 0;
 	while (node)
@@ -1858,7 +1776,7 @@ static struct cache_t* cache_table_lookup(const void *key)
 
 static int cache_table_insert(struct cache_t *cache)
 {
-	struct rb_node **p = &cache_table.rb_root.rb_node;
+	struct rb_node **p = &cache_table->rb_root.rb_node;
 	struct rb_node *parent = NULL;
 	struct cache_t *cache_tmp = NULL;
 	int cmp;
@@ -1875,15 +1793,15 @@ static int cache_table_insert(struct cache_t *cache)
 			return -1; 
 	}   
 	rb_link_node(&cache->rb_node, parent, p); 
-	rb_insert_color(&cache->rb_node, &cache_table.rb_root);
-	cache_table.count--;
+	rb_insert_color(&cache->rb_node, &cache_table->rb_root);
+	cache_table->count--;
 	return 0;
 }
 
 static int cache_table_erase(struct cache_t *cache)
 {
-	rb_erase(&cache->rb_node, &cache_table.rb_root);
-	cache_table.count--;
+	rb_erase(&cache->rb_node, &cache_table->rb_root);
+	cache_table->count--;
 	return 0;
 }
 
@@ -1900,15 +1818,4 @@ static void cache_free(struct cache_t *cache)
 {
 	http_free(cache->key);
 	http_free(cache);
-}
-
-void cache_table_clean()
-{
-	struct cache_t *cache = NULL;
-	struct rb_node *node = NULL;
-	while ((node = rb_first(&cache_table.rb_root))) {
-		cache = rb_entry(node, struct cache_t, rb_node);
-		cache_table_erase(cache);
-		cache_free(cache);
-	}
 }

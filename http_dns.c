@@ -3,50 +3,7 @@
 #include "http_connection.h"
 #include "http_dns.h"
 
-#define RFC1035_TYPE_A 1
-#define RFC1035_TYPE_AAAA 28
-#define RFC1035_TYPE_CNAME 5
-#define RFC1035_TYPE_PTR 12
-#define RFC1035_CLASS_IN 1
-#define DNS_EXPIRE_TIME (60 * 1000)
-
-#define RFC1035_MAXHOSTNAMESZ 256
-#define RFC1035_MAXLABELSZ 63
-#define rfc1035_unpack_error 15
-
-struct rfc1035_query_t {
-	char name[RFC1035_MAXHOSTNAMESZ];
-	unsigned short qtype;
-	unsigned short qclass;
-};
-
-struct rfc1035_rr_t {
-	char name[RFC1035_MAXHOSTNAMESZ];
-	unsigned short type;
-	unsigned short class;
-	unsigned int ttl;
-	unsigned short rdlength;
-	char *rdata;
-};
-
-struct rfc1035_message_t {
-	unsigned short id;
-	unsigned int qr:1;
-	unsigned int opcode:4;
-	unsigned int aa:1;
-	unsigned int tc:1;
-	unsigned int rd:1;
-	unsigned int ra:1;
-	unsigned int rcode:4;
-	unsigned short qdcount;
-	unsigned short ancount;
-	unsigned short nscount;
-	unsigned short arcount;
-	struct rfc1035_query_t *query;
-	struct rfc1035_rr_t *answer;
-};
-
-struct dns_cache_table_t dns_cache_table;
+static struct dns_cache_table_t *dns_cache_table = NULL;
 
 static int dns_cache_table_lock();
 static int dns_cache_table_unlock();
@@ -76,26 +33,27 @@ static int rfc1035QueryCompare(const struct rfc1035_query_t *a, const struct rfc
 
 static const char* rfc1035MessageErrno(int rfc1035_errno);
 
-void dns_cache_table_init()
+void dns_cache_table_create()
 {
-	memset(&dns_cache_table, 0, sizeof(struct dns_cache_table_t));
-	pthread_mutex_init(&dns_cache_table.mutex, NULL);
-	dns_cache_table.rb_root = RB_ROOT;
+	dns_cache_table = http_malloc(sizeof(struct dns_cache_table_t));
+	memset(dns_cache_table, 0, sizeof(struct dns_cache_table_t));
+	pthread_mutex_init(&dns_cache_table->mutex, NULL);
+	dns_cache_table->rb_root = RB_ROOT;
 }
 
 static int dns_cache_table_lock()
 {
-	return pthread_mutex_lock(&dns_cache_table.mutex);
+	return pthread_mutex_lock(&dns_cache_table->mutex);
 }
 
 static int dns_cache_table_unlock()
 {
-	return pthread_mutex_unlock(&dns_cache_table.mutex);
+	return pthread_mutex_unlock(&dns_cache_table->mutex);
 }
 
 static struct dns_cache_t* dns_cache_table_lookup(const void *key)
 {
-	struct rb_node *node = dns_cache_table.rb_root.rb_node;
+	struct rb_node *node = dns_cache_table->rb_root.rb_node;
 	struct dns_cache_t *dns_cache = NULL;
 	int cmp = 0;
 	while (node)
@@ -114,7 +72,7 @@ static struct dns_cache_t* dns_cache_table_lookup(const void *key)
 
 static int dns_cache_table_insert(struct dns_cache_t *dns_cache)
 {
-	struct rb_node **p = &dns_cache_table.rb_root.rb_node;
+	struct rb_node **p = &dns_cache_table->rb_root.rb_node;
 	struct rb_node *parent = NULL;
 	struct dns_cache_t *dns_cache_tmp = NULL;
 	int cmp;
@@ -131,15 +89,15 @@ static int dns_cache_table_insert(struct dns_cache_t *dns_cache)
 			return -1; 
 	}   
 	rb_link_node(&dns_cache->rb_node, parent, p); 
-	rb_insert_color(&dns_cache->rb_node, &dns_cache_table.rb_root);
-	dns_cache_table.count--;
+	rb_insert_color(&dns_cache->rb_node, &dns_cache_table->rb_root);
+	dns_cache_table->count--;
 	return 0;
 }
 
 static int dns_cache_table_erase(struct dns_cache_t *dns_cache)
 {
-	rb_erase(&dns_cache->rb_node, &dns_cache_table.rb_root);
-	dns_cache_table.count--;
+	rb_erase(&dns_cache->rb_node, &dns_cache_table->rb_root);
+	dns_cache_table->count--;
 	return 0;
 }
 
@@ -159,16 +117,18 @@ static void dns_cache_free(struct dns_cache_t *dns_cache)
 	http_free(dns_cache);
 }
 
-void dns_cache_table_clean()
+void dns_cache_table_free()
 {
 	struct dns_cache_t *dns_cache = NULL;
 	struct rb_node *node = NULL;
-	while ((node = rb_first(&dns_cache_table.rb_root))) {
+	while ((node = rb_first(&dns_cache_table->rb_root))) {
 		dns_cache = rb_entry(node, struct dns_cache_t, rb_node);
 		dns_cache_table_erase(dns_cache);
 		dns_cache_free(dns_cache);
 	}
-	pthread_mutex_destroy(&dns_cache_table.mutex);
+	pthread_mutex_destroy(&dns_cache_table->mutex);
+	http_free(dns_cache_table);
+	dns_cache_table = NULL;
 }
 
 void dns_info_copy(struct dns_info_t *dest, const struct dns_info_t *src)
