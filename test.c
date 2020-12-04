@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if 0
 struct buffer_t {
 	size_t size;
 	size_t len;
@@ -44,4 +45,15 @@ void fifo_pop(struct fifo_t *fifo)
 	assert(fifo->in > fifo->out);
 	fifo->data[(fifo->out & (fifo->size - 1))] = NULL;
 	fifo->out++;
+}
+#endif
+
+int main()
+{
+	int n = 0;
+	char buf[5];
+	buf[4] = '5';
+	n = snprintf(buf, sizeof(buf), "12345678");
+	printf("n=%d buf=%s\n", n, buf);
+	return 0;
 }

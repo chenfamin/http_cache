@@ -24,8 +24,10 @@ static int reply_on_body(http_parser *hp, const char *at, size_t length);
 static int reply_on_message_complete(http_parser *hp); 
 
 static void http_session_accept(struct connection_t *connection);
+static void http_session_close(struct http_session_t *http_session);
 static void http_session_free(struct http_session_t *http_session);
 static void http_client_create(struct http_session_t *http_session, struct connection_t *connection);
+static void http_client_check_close(struct http_session_t *http_session, int error_code);
 static void http_client_close(struct http_session_t *http_session, int error_code);
 static void http_client_read_header(struct connection_t *connection);
 static void http_client_read_body(struct connection_t *connection);
@@ -47,6 +49,7 @@ static void http_client_read_resume(struct http_session_t *http_session);
 static void http_client_write_resume(struct http_session_t *http_session);
 
 static void http_server_create(struct http_session_t *http_session, struct http_range_t *range);
+static void http_server_check_close(struct http_session_t *http_session, int error_code);
 static void http_server_close(struct http_session_t *http_session, int error_code);
 static void http_server_connect(void *data);
 static void http_server_connect_check(struct connection_t *connection);
@@ -641,6 +644,20 @@ static void http_session_accept(struct connection_t *connection)
 	http_client_create(http_session, new_connection);
 }
 
+void http_session_abort(struct http_session_t *http_session)
+{
+	struct http_request_t *http_request = &http_session->http_request;
+	http_session->abort = 1;
+	LOG(LOG_DEBUG, "%s %s abort\n", http_session->epoll_thread->name, string_buf(&http_request->url));
+	if (http_session->http_client) {
+		http_client_close(http_session, -1);
+	} else if (http_session->http_server) {
+		http_server_close(http_session, -1);
+	} else {
+		assert(0);
+	}
+}
+
 static void http_session_close(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
@@ -688,6 +705,28 @@ static void http_client_create(struct http_session_t *http_session, struct conne
 	connection_read_enable(connection, http_client_read_header);
 }
 
+static void http_client_check_close(struct http_session_t *http_session, int error_code)
+{
+	struct http_client_t *http_client = http_session->http_client;
+	int64_t body_send_size = 0;
+	if (http_session->abort) {
+		http_client_close(http_session, -1);
+		return;
+	}
+	if (string_strlen(&http_client->reply_header) == 0) {
+		if (error_code) {
+			http_client_build_error_reply(http_session, error_code);
+			connection_write_enable(http_client->connection, http_client_write);
+		}
+	} else  {
+		body_send_size = http_client->reply_send_size - string_strlen(&http_client->reply_header);
+		if (http_session->body_list.hight > http_client->body_offset + body_send_size) {
+		} else {
+			http_client_close(http_session, -1);
+		}
+	}
+}
+
 static void http_client_close(struct http_session_t *http_session, int error_code)
 {
 	struct http_request_t *http_request = &http_session->http_request;
@@ -709,12 +748,11 @@ static void http_client_close(struct http_session_t *http_session, int error_cod
 	http_free(http_client);
 	http_session->http_client = NULL;
 	if (http_session->http_server) {
-		http_server_close(http_session, -1);
+		http_server_check_close(http_session, -1);
 	} else {
 		http_session_close(http_session);
 	}
 }
-
 
 static void http_client_read_header(struct connection_t *connection)
 {
@@ -1190,6 +1228,11 @@ static void http_server_create(struct http_session_t *http_session, struct http_
 	string_clean(&host);
 }
 
+static void http_server_check_close(struct http_session_t *http_session, int error_code)
+{
+	http_server_close(http_session, error_code);
+}
+
 static void http_server_close(struct http_session_t *http_session, int error_code)
 {
 	struct http_request_t *http_request = &http_session->http_request;
@@ -1213,19 +1256,7 @@ static void http_server_close(struct http_session_t *http_session, int error_cod
 	http_free(http_server);
 	http_session->http_server = NULL;
 	if (http_client) {
-		int64_t body_send_size = 0;
-		if (string_strlen(&http_client->reply_header) == 0) {
-			if (error_code) {
-				http_client_build_error_reply(http_session, error_code);
-				connection_write_enable(http_client->connection, http_client_write);
-			}
-		} else  {
-			body_send_size = http_client->reply_send_size - string_strlen(&http_client->reply_header);
-			if (http_session->body_list.hight > http_client->body_offset + body_send_size) {
-			} else {
-				http_client_close(http_session, -1);
-			}
-		}
+		http_client_check_close(http_session, error_code);
 	} else {
 		http_session_close(http_session);
 	}

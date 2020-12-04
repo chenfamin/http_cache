@@ -17,6 +17,7 @@ static void sig_int(int sig);
 static void sig_pipe(int sig);
 
 static void epoll_thread_pipe_read(struct connection_t *connection);
+static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread);
 
 static void sig_int(int sig)
 {
@@ -31,12 +32,7 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 {
 	int event_pipe[2];
 	struct connection_t *connection = NULL;
-	INIT_LIST_HEAD(&epoll_thread->listen_list);
-	INIT_LIST_HEAD(&epoll_thread->ready_list);
-	INIT_LIST_HEAD(&epoll_thread->free_list);
-	INIT_LIST_HEAD(&epoll_thread->http_session_list);
-	INIT_LIST_HEAD(&epoll_thread->done_list);
-	pthread_mutex_init(&epoll_thread->done_mutex, NULL);
+	LOG(LOG_INFO, "%s init\n", epoll_thread->name);
 	epoll_thread->epoll_fd = epoll_create(MAX_EPOLL_FD);
 	if (epoll_thread->epoll_fd < 0) {
 		LOG(LOG_ERROR, "%s epoll_create error:%s\n", epoll_thread->name, strerror(errno));
@@ -46,6 +42,12 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 		LOG(LOG_ERROR, "%s pipe error:%s\n", epoll_thread->name, strerror(errno));
 		exit(-1);
 	} 
+	INIT_LIST_HEAD(&epoll_thread->listen_list);
+	INIT_LIST_HEAD(&epoll_thread->ready_list);
+	INIT_LIST_HEAD(&epoll_thread->free_list);
+	INIT_LIST_HEAD(&epoll_thread->http_session_list);
+	INIT_LIST_HEAD(&epoll_thread->done_list);
+	pthread_mutex_init(&epoll_thread->done_mutex, NULL);
 	socket_non_block(event_pipe[0]);
 	socket_non_block(event_pipe[1]);
 
@@ -55,14 +57,13 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 	connection->epoll_thread = epoll_thread;
 	epoll_thread->pipe_read_connection = connection;
 	epoll_thread->pipe_write_fd = event_pipe[1];
-
 	epoll_thread->dns_session = dns_session_create(epoll_thread);
 }
 
 void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 {
 	struct connection_t *connection = NULL;
-	LOG(LOG_INFO, "%s epoll_fd=%d exit\n", epoll_thread->name, epoll_thread->epoll_fd);
+	LOG(LOG_INFO, "%s epoll_fd=%d clean\n", epoll_thread->name, epoll_thread->epoll_fd);
 	if (epoll_thread->dns_session) {
 		dns_session_close(epoll_thread->dns_session);
 		epoll_thread->dns_session = NULL;
@@ -72,6 +73,8 @@ void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 		list_del(&connection->node);
 		connection_close(connection, CONNECTION_FREE_NOW);
 	}
+	connection_close(epoll_thread->pipe_read_connection, CONNECTION_FREE_NOW);
+	close(epoll_thread->pipe_write_fd);
 	close(epoll_thread->epoll_fd);
 	assert(list_empty(&epoll_thread->ready_list));
 	assert(list_empty(&epoll_thread->free_list));
@@ -79,44 +82,6 @@ void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 	assert(list_empty(&epoll_thread->done_list));
 	pthread_mutex_destroy(&epoll_thread->done_mutex);
 }
-
-struct epoll_thread_t* epoll_thread_select()
-{
-	return epoll_threads + 0;
-}
-
-static void epoll_thread_pipe_read(struct connection_t *connection)
-{
-	char buf[256];
-	int loop = 0;
-	ssize_t nread = 0;
-	struct epoll_thread_t *epoll_thread = connection->epoll_thread;
-	assert(connection == epoll_thread->pipe_read_connection);
-	do {
-		loop++;
-		nread = read(connection->fd, buf, sizeof(buf));
-		if (nread <= 0) {
-			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-				LOG(LOG_DEBUG, "%s fd=%d wait for read\n", epoll_thread->name, connection->fd);
-				connection_read_done(connection);
-				epoll_thread->signal = 0;
-			} else {
-				LOG(LOG_DEBUG, "%s fd=%d nread=%d error:%s\n", epoll_thread->name, connection->fd, nread, strerror(errno));
-			}
-			break;
-		}
-	} while (loop < MAX_LOOP);
-	connection_read_enable(connection, epoll_thread_pipe_read);
-}
-
-void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
-{
-	if (!epoll_thread->signal) {
-		epoll_thread->signal = 1;
-		write(epoll_thread->pipe_write_fd, "1", 1);
-	}
-}
-
 
 void* epoll_thread_loop(void *arg)
 {
@@ -160,25 +125,75 @@ void* epoll_thread_loop(void *arg)
 		}
 		if (epoll_thread_exit) {
 			if (list_empty(&epoll_thread->http_session_list)) {
+				LOG(LOG_INFO, "%s epoll_fd=%d exit\n", epoll_thread->name, epoll_thread->epoll_fd);
 				break;
+			} else {
+				epoll_thread_abort_session(epoll_thread);
 			}
 		}
 	}
 	return NULL;
 }
 
+static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread)
+{
+	struct http_session_t *http_session = NULL;
+	while (!list_empty(&epoll_thread->http_session_list)) {
+		http_session = d_list_head(&epoll_thread->http_session_list, struct http_session_t, node);
+		http_session_abort(http_session);
+	}
+}
+
+struct epoll_thread_t* epoll_thread_select()
+{
+	return epoll_threads + 0;
+}
+
+static void epoll_thread_pipe_read(struct connection_t *connection)
+{
+	char buf[256];
+	int loop = 0;
+	ssize_t nread = 0;
+	struct epoll_thread_t *epoll_thread = connection->epoll_thread;
+	assert(connection == epoll_thread->pipe_read_connection);
+	do {
+		loop++;
+		nread = read(connection->fd, buf, sizeof(buf));
+		if (nread <= 0) {
+			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				LOG(LOG_DEBUG, "%s fd=%d wait for read\n", epoll_thread->name, connection->fd);
+				connection_read_done(connection);
+				epoll_thread->signal = 0;
+			} else {
+				LOG(LOG_DEBUG, "%s fd=%d nread=%d error:%s\n", epoll_thread->name, connection->fd, nread, strerror(errno));
+			}
+			break;
+		}
+	} while (loop < MAX_LOOP);
+	connection_read_enable(connection, epoll_thread_pipe_read);
+}
+
+void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
+{
+	if (!epoll_thread->signal) {
+		epoll_thread->signal = 1;
+		write(epoll_thread->pipe_write_fd, "1", 1);
+	}
+}
+
 void aio_thread_init(struct aio_thread_t *aio_thread)
 {
+	LOG(LOG_INFO, "%s init\n", aio_thread->name);
 }
 
 void aio_thread_clean(struct aio_thread_t *aio_thread)
 {
-	LOG(LOG_INFO, "%s exit\n", aio_thread->name);
+	LOG(LOG_INFO, "%s clean\n", aio_thread->name);
 }
 
 void* aio_thread_loop(void *arg)
 {
-	//struct aio_thread_t *aio_thread = arg;
+	struct aio_thread_t *aio_thread = arg;
 	struct epoll_thread_t *epoll_thread = NULL;
 	struct aio_t *aio = NULL;
 	while (1) {
@@ -186,6 +201,7 @@ void* aio_thread_loop(void *arg)
 		if (list_empty(&aio_list->list)) {
 			if (aio_thread_exit) {
 				pthread_mutex_unlock(&aio_list->mutex);
+				LOG(LOG_INFO, "%s exit\n", aio_thread->name);
 				break;
 			} else {
 				pthread_cond_wait(&aio_list->cond, &aio_list->mutex);
@@ -236,6 +252,7 @@ void aio_list_free()
 int main()
 {
 	int i = 0;
+	log_file_open();
 	if (signal(SIGINT, sig_int) == SIG_ERR) {
 		LOG(LOG_ERROR, "regist SIGINT error\n");
 	}
@@ -297,5 +314,6 @@ int main()
 	aio_list_free();
 	dns_cache_table_free();
 	cache_table_free();
+	log_file_close();
 	return 0;
 }

@@ -86,12 +86,13 @@ struct http_session_t {
 	struct http_client_t *http_client;
 	struct http_cache_client_t *http_cache_client;
 	struct http_server_t *http_server;
-
+	int abort;
 	struct mem_list_t body_list;
 	struct epoll_thread_t *epoll_thread;
 };
 
 void http_session_listen(const char *host, int port);
+void http_session_abort(struct http_session_t *http_session);
 void cache_table_create();
 void cache_table_free();
 

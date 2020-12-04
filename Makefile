@@ -15,3 +15,4 @@ test:
 	./$(TARGET)
 clean:
 	rm -f $(TARGET) *.o
+	rm -f debug.log
