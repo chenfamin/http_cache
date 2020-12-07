@@ -16,6 +16,7 @@ static volatile int aio_thread_exit = 0;
 static void sig_int(int sig);
 static void sig_pipe(int sig);
 
+static void epoll_thread_process_events(struct epoll_thread_t *epoll_thread, struct list_head_t *ready_list);
 static void epoll_thread_pipe_read(struct connection_t *connection);
 static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread);
 
@@ -89,9 +90,8 @@ void* epoll_thread_loop(void *arg)
 	struct connection_t *connection;
 	struct list_head_t ready_list;
 	struct epoll_event event_result[MAX_EPOLL_FD];
-	int nfds = 0;
 	int i = 0;
-	prctl(PR_SET_NAME, epoll_thread->name, 0, 0, 0);
+	int nfds = 0;
 	while (1) {
 		INIT_LIST_HEAD(&ready_list);
 		list_splice_init(&epoll_thread->ready_list, &ready_list);
@@ -114,11 +114,7 @@ void* epoll_thread_loop(void *arg)
 				list_add_tail(&connection->ready_node, &ready_list);
 			}
 		}
-		while (!list_empty(&ready_list)) {
-			connection = d_list_head(&ready_list, struct connection_t, ready_node);
-			list_del(&connection->ready_node);
-			connection_handle(connection);
-		}
+		epoll_thread_process_events(epoll_thread, &ready_list);
 		while (!list_empty(&epoll_thread->free_list)) {
 			connection = d_list_head(&epoll_thread->free_list, struct connection_t, node);
 			list_del(&connection->node);
@@ -134,6 +130,27 @@ void* epoll_thread_loop(void *arg)
 		}
 	}
 	return NULL;
+}
+
+static void epoll_thread_process_events(struct epoll_thread_t *epoll_thread, struct list_head_t *ready_list)
+{
+	struct list_head_t done_list;
+	struct connection_t *connection = NULL;
+	struct aio_t *aio = NULL;
+	INIT_LIST_HEAD(&done_list);
+	while (!list_empty(ready_list)) {
+		connection = d_list_head(ready_list, struct connection_t, ready_node);
+		list_del(&connection->ready_node);
+		connection_handle(connection);
+	}
+	pthread_mutex_lock(&epoll_thread->done_mutex);
+	list_splice_init(&epoll_thread->done_list, &done_list);
+	pthread_mutex_unlock(&epoll_thread->done_mutex);
+	while (!list_empty(&done_list)) {
+		aio = d_list_head(&done_list, struct aio_t, node);
+		list_del(&aio->node);
+		aio->aio_done(aio);
+	}
 }
 
 static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread)
@@ -197,7 +214,6 @@ void* aio_thread_loop(void *arg)
 	struct aio_thread_t *aio_thread = arg;
 	struct epoll_thread_t *epoll_thread = NULL;
 	struct aio_t *aio = NULL;
-	prctl(PR_SET_NAME, aio_thread->name, 0, 0, 0);
 	while (1) {
 		pthread_mutex_lock(&aio_list->mutex);
 		if (list_empty(&aio_list->list)) {
