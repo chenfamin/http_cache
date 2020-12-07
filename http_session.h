@@ -2,6 +2,7 @@
 #define HTTP_SESSION_H
 
 #include "http.h"
+#include "http_aio.h"
 #include "http_header.h"
 
 struct http_request_t {
@@ -31,6 +32,13 @@ struct cache_table_t {
 	int64_t count;
 };
 
+struct cache_file_t {
+	int fd;
+	struct list_head_t delay_list;
+	struct aio_t aio;
+	int busy;
+};
+
 struct cache_t {
 	char *key;
 	struct rb_node rb_node;
@@ -39,6 +47,8 @@ struct cache_t {
 
 	struct http_reply_t *http_reply;
 	int header_size;
+	struct cache_file_t *cache_file;
+	char *path;
 };
 
 struct cache_client_t {

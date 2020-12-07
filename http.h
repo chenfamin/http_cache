@@ -112,35 +112,20 @@ struct epoll_thread_t {
 struct aio_thread_t {
 	pthread_t tid;
 	char name[64];
+	void *aio_list;
 };
-
-struct aio_t {
-	struct list_head_t node;
-	int fd;
-	void (*aio_exec)(struct aio_t *aio);
-	void (*aio_done)(struct aio_t *aio);
-	void *aio_data;
-	struct epoll_thread_t *epoll_thread;
-};
-
-struct aio_list_t {
-	struct list_head_t list;
-	pthread_mutex_t mutex;
-	pthread_cond_t cond;
-};
-
 
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
 
 void string_init_size(struct string_t *string, size_t size);
 void string_init_str(struct string_t *string, const char *s);
+void string_clean(struct string_t *string);
 void string_strcat(struct string_t *string, const char *s);
 void string_strncat(struct string_t *string, const char *s, size_t len);
 void string_strcat_printf(struct string_t *string, const char *format, ...);
 size_t string_strlen(const struct string_t *string);
 char* string_buf(const struct string_t *string);
-void string_clean(struct string_t *string);
 
 struct mem_node_t *mem_node_alloc(size_t size);
 struct mem_node_t* mem_node_realloc(struct mem_node_t *mem_node, size_t size);

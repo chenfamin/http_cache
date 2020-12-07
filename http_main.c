@@ -1,5 +1,6 @@
 #include "http.h"
 #include "http_log.h"
+#include "http_aio.h"
 #include "http_connection.h"
 #include "http_dns.h"
 #include "http_session.h"
@@ -8,7 +9,6 @@ static int epoll_threads_num = 2;
 static int aio_threads_num = 4;
 static struct epoll_thread_t *epoll_threads = NULL;
 static struct aio_thread_t *aio_threads = NULL;
-static struct aio_list_t *aio_list = NULL;
 
 static volatile int epoll_thread_exit = 0;
 static volatile int aio_thread_exit = 0;
@@ -19,6 +19,7 @@ static void sig_pipe(int sig);
 static void epoll_thread_process_events(struct epoll_thread_t *epoll_thread, struct list_head_t *ready_list);
 static void epoll_thread_pipe_read(struct connection_t *connection);
 static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread);
+static void aio_thread_broadcast();
 
 static void sig_int(int sig)
 {
@@ -202,6 +203,7 @@ void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
 void aio_thread_init(struct aio_thread_t *aio_thread)
 {
 	LOG(LOG_INFO, "%s init\n", aio_thread->name);
+	aio_thread->aio_list = aio_list_get();
 }
 
 void aio_thread_clean(struct aio_thread_t *aio_thread)
@@ -213,6 +215,7 @@ void* aio_thread_loop(void *arg)
 {
 	struct aio_thread_t *aio_thread = arg;
 	struct epoll_thread_t *epoll_thread = NULL;
+	struct aio_list_t *aio_list = aio_thread->aio_list;
 	struct aio_t *aio = NULL;
 	while (1) {
 		pthread_mutex_lock(&aio_list->mutex);
@@ -242,30 +245,14 @@ void* aio_thread_loop(void *arg)
 	return NULL;
 }
 
-void aio_thread_broadcast()
+static void aio_thread_broadcast()
 {
+	struct aio_list_t *aio_list = NULL;
+	aio_list = aio_list_get();
 	pthread_mutex_lock(&aio_list->mutex);
 	pthread_cond_broadcast(&aio_list->cond);
 	pthread_mutex_unlock(&aio_list->mutex);
 };
-
-void aio_list_create()
-{
-	aio_list = http_malloc(sizeof(struct aio_list_t));
-	memset(aio_list, 0, sizeof(struct aio_list_t));
-	INIT_LIST_HEAD(&aio_list->list);
-	pthread_mutex_init(&aio_list->mutex, NULL);
-	pthread_cond_init(&aio_list->cond, NULL);
-}
-
-void aio_list_free()
-{
-	assert(list_empty(&aio_list->list));
-	pthread_mutex_destroy(&aio_list->mutex);
-	pthread_cond_destroy(&aio_list->cond);
-	http_free(aio_list);
-	aio_list = NULL;
-}
 
 int main()
 {

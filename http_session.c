@@ -1,5 +1,6 @@
 #include "http.h"
 #include "http_log.h"
+#include "http_aio.h"
 #include "http_connection.h"
 #include "http_dns.h"
 #include "http_header.h"
@@ -67,8 +68,13 @@ static int cache_client_process_header(struct http_session_t *http_session, stru
 static void http_session_lookup_cache(struct http_session_t *http_session);
 static void cache_client_read_header(struct http_session_t *http_session);
 static void cache_client_write_header(struct http_session_t *http_session);
+static void cache_client_write_header_done(struct aio_t *aio);
 static void cache_client_mark_release(struct http_session_t *http_session);
 static void http_session_unlock_cache(struct http_session_t *http_session);
+static void cache_file_open(struct cache_t *cache);
+static void cache_file_open_done(struct aio_t *aio);
+static void cache_file_close_done(struct aio_t *aio);
+static void cache_file_close(struct cache_t *cache);
 
 static int cache_table_lock();
 static int cache_table_unlock();
@@ -125,6 +131,11 @@ void string_init_str(struct string_t *string, const char *s)
 	string_strncat(string, s, len);
 }
 
+void string_clean(struct string_t *string)
+{
+	http_free(string->buf);
+}
+
 void string_strcat(struct string_t *string, const char *s)
 {
 	string_strncat(string, s, strlen(s));
@@ -174,11 +185,6 @@ size_t string_strlen(const struct string_t *string)
 char* string_buf(const struct string_t *string)
 {
 	return string->buf;
-}
-
-void string_clean(struct string_t *string)
-{
-	http_free(string->buf);
 }
 
 struct mem_node_t* mem_node_alloc(size_t size)
@@ -1674,6 +1680,7 @@ static void cache_client_create(struct http_session_t *http_session, struct cach
 	memset(cache_client, 0, sizeof(struct cache_client_t));
 	cache_client->cache = cache;
 	http_session->cache_client = cache_client;
+	cache_client->aio.callback_data = http_session;
 }
 
 static void cache_client_close(struct http_session_t *http_session)
@@ -1767,6 +1774,7 @@ static void cache_client_write_header(struct http_session_t *http_session)
 	struct http_reply_t *http_reply = cache->http_reply;
 	struct http_header_entry_t *header_entry;
 	struct string_t string;
+	assert(cache_client->busy == 0);
 	string_init_size(&string, 1024);
 	string_strcat_printf(&string, "HTTP/%d.%d %s\r\n", 
 			http_reply->http_major, http_reply->http_minor, http_status_reasons_get(http_reply->status_code));
@@ -1778,11 +1786,78 @@ static void cache_client_write_header(struct http_session_t *http_session)
 	}    
 	string_strcat(&string, "\r\n"); 
 	LOG(LOG_INFO, "%s %s reply=\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), string_buf(&string));
-	string_clean(&string);
+
+	if (cache->cache_file == NULL) {
+		cache_file_open(cache);
+	}
+	cache_client->aio.buf = string_buf(&string);
+	cache_client->aio.buf_len = string_strlen(&string);
+	cache_client->aio.offset = 0;
+	cache_client->aio.aio_exec = aio_pread;
+	cache_client->aio.aio_done = cache_client_write_header_done;
+	if (cache->cache_file->aio.fd > 0) {
+		cache_client->aio.fd = cache->cache_file->aio.fd;
+		aio_summit(&cache_client->aio);
+	} else {
+		list_add_tail(&cache_client->aio.node, &cache->cache_file->delay_list);
+		LOG(LOG_DEBUG, "%s %s wait for cache_file_open", http_session->epoll_thread->name, string_buf(&http_request->url));
+	}
+}
+
+static void cache_client_write_header_done(struct aio_t *aio)
+{
 }
 
 static void cache_client_mark_release(struct http_session_t *http_session)
 {
+}
+
+static void cache_file_open(struct cache_t *cache)
+{
+	struct cache_file_t *cache_file = NULL;
+	cache_file = http_malloc(sizeof(struct cache_file_t));
+	memset(cache_file, 0, sizeof(struct cache_file_t));
+	cache->cache_file = cache_file;
+	INIT_LIST_HEAD(&cache_file->delay_list);
+	if (cache->path == NULL) {
+		cache_file->aio.aio_exec = aio_create_cache_file;
+	} else {
+		cache_file->aio.aio_exec = aio_open;
+	}
+	cache_file->aio.buf = NULL;
+	cache_file->aio.buf_len = 0;
+	cache_file->aio.offset = 0;
+	cache_file->aio.callback_data = cache_file;
+}
+
+static void cache_file_open_done(struct aio_t *aio)
+{
+}
+
+static void cache_file_close(struct cache_t *cache)
+{
+}
+
+static void cache_file_close_done(struct aio_t *aio)
+{
+}
+
+static struct cache_t* cache_alloc(const char *key)
+{
+	struct cache_t *cache = NULL;
+	cache = http_malloc(sizeof(struct cache_t));
+	memset(cache, 0, sizeof(struct cache_t));
+	cache->key = http_strdup(key);
+	return cache;
+}
+
+static void cache_free(struct cache_t *cache)
+{
+	http_free(cache->key);
+	if (cache->http_reply) {
+		http_reply_free(cache->http_reply);
+	}
+	http_free(cache);
 }
 
 void cache_table_create()
@@ -1865,19 +1940,4 @@ static int cache_table_erase(struct cache_t *cache)
 	rb_erase(&cache->rb_node, &cache_table->rb_root);
 	cache_table->count--;
 	return 0;
-}
-
-static struct cache_t* cache_alloc(const char *key)
-{
-	struct cache_t *cache = NULL;
-	cache = http_malloc(sizeof(struct cache_t));
-	memset(cache, 0, sizeof(struct cache_t));
-	cache->key = http_strdup(key);
-	return cache;
-}
-
-static void cache_free(struct cache_t *cache)
-{
-	http_free(cache->key);
-	http_free(cache);
 }
