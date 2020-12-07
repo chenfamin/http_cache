@@ -33,12 +33,6 @@ static void http_client_read_header(struct connection_t *connection);
 static void http_client_read_body(struct connection_t *connection);
 static int http_client_process_header(struct http_session_t *http_session);
 
-static void http_cache_lookup(struct http_session_t *http_session);
-static void http_cache_read_header(struct http_session_t *http_session);
-static void http_cache_write_header(struct http_session_t *http_session);
-static void http_cache_mark_release(struct http_session_t *http_session);
-static void http_cache_unlock(struct http_session_t *http_session);
-
 static void http_client_dispatch(struct http_session_t *http_session);
 static void http_client_dump_header(struct http_session_t *http_session);
 static void http_client_build_reply(struct http_session_t *http_session, struct http_reply_t *http_reply);
@@ -67,8 +61,15 @@ static void http_reply_free(struct http_reply_t *http_reply);
 static int http_request_cacheable(struct http_request_t *http_request);
 static int http_reply_cacheable(struct http_reply_t *http_reply);
 
-static void http_cache_client_create(struct http_session_t *http_session, struct cache_t *cache);
-static void http_cache_client_close(struct http_session_t *http_session);
+static void cache_client_create(struct http_session_t *http_session, struct cache_t *cache);
+static void cache_client_close(struct http_session_t *http_session);
+static int cache_client_process_header(struct http_session_t *http_session, struct http_reply_t *http_reply);
+static void http_session_lookup_cache(struct http_session_t *http_session);
+static void cache_client_read_header(struct http_session_t *http_session);
+static void cache_client_write_header(struct http_session_t *http_session);
+static void cache_client_mark_release(struct http_session_t *http_session);
+static void http_session_unlock_cache(struct http_session_t *http_session);
+
 static int cache_table_lock();
 static int cache_table_unlock();
 static struct cache_t* cache_table_lookup(const void *key);
@@ -664,11 +665,11 @@ static void http_session_close(struct http_session_t *http_session)
 	assert(http_session->http_client == NULL);
 	assert(http_session->http_server == NULL);
 	list_del(&http_session->node);
-	if (http_session->http_cache_client) {
-		if (http_session->http_cache_client->busy) {
+	if (http_session->cache_client) {
+		if (http_session->cache_client->busy) {
 			LOG(LOG_DEBUG, "%s %s wait aio close\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 		} else {
-			http_cache_client_close(http_session);
+			cache_client_close(http_session);
 		}
 	} else {
 		LOG(LOG_DEBUG, "%s %s session free\n", http_session->epoll_thread->name, string_buf(&http_request->url));
@@ -679,7 +680,7 @@ static void http_session_close(struct http_session_t *http_session)
 static void http_session_free(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
-	assert(http_session->http_cache_client == NULL);
+	assert(http_session->cache_client == NULL);
 	string_clean(&http_request->url);
 	http_header_clean(&http_request->header);
 	if (http_request->range) {
@@ -818,7 +819,7 @@ static void http_client_read_header(struct connection_t *connection)
 		mem_list_append(&http_session->post_list, buf + nparse, nread - nparse);
 	}
 	connection_read_enable(connection, http_client_read_body);
-	http_cache_lookup(http_session);
+	http_session_lookup_cache(http_session);
 }
 
 static void http_client_read_body(struct connection_t *connection)
@@ -896,58 +897,6 @@ static int http_client_process_header(struct http_session_t *http_session)
 		}    
 	}
 	return 0;
-}
-
-static void http_cache_lookup(struct http_session_t *http_session)
-{
-	struct http_request_t *http_request = &http_session->http_request;
-	struct cache_t *cache = NULL;
-	if (http_request_cacheable(http_request)) {
-		cache_table_lock();
-		cache = cache_table_lookup(string_buf(&http_request->url));
-		if (cache == NULL) {
-			cache = cache_alloc(string_buf(&http_request->url));
-			cache->epoll_thread = http_session->epoll_thread;
-			cache->lock++;
-			cache_table_insert(cache);
-			cache_table_unlock();
-			http_cache_client_create(http_session, cache);
-			http_server_create(http_session, http_request->range);
-			return;
-		} else {
-			cache->lock++;
-			if (cache->epoll_thread == NULL) {
-				cache->epoll_thread = http_session->epoll_thread;
-			}
-			cache_table_unlock();
-			http_cache_client_create(http_session, cache);
-			if (cache->epoll_thread != http_session->epoll_thread) {
-				http_client_dispatch(http_session);
-			} else {
-				http_cache_read_header(http_session);
-			}
-			return;
-		}
-	} else {
-		http_server_create(http_session, http_request->range);
-		return;
-	}
-}
-
-static void http_cache_read_header(struct http_session_t *http_session)
-{
-}
-
-static void http_cache_write_header(struct http_session_t *http_session)
-{
-}
-
-static void http_cache_mark_release(struct http_session_t *http_session)
-{
-}
-
-static void http_cache_unlock(struct http_session_t *http_session)
-{
 }
 
 static void http_client_dispatch(struct http_session_t *http_session)
@@ -1033,7 +982,7 @@ static void http_client_build_reply(struct http_session_t *http_session, struct 
 			http_client->body_expect_size = INT64_MAX;
 		}
 	}
-	string_strcat(&http_client->reply_header, "Via: http_cache\r\n");
+	string_strcat(&http_client->reply_header, "Via: cache_client\r\n");
 	string_strcat(&http_client->reply_header, "\r\n");
 	LOG(LOG_INFO, "%s %s reply=\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), string_buf(&http_client->reply_header));
 }
@@ -1046,7 +995,7 @@ static void http_client_build_error_reply(struct http_session_t *http_session, i
 	http_client->body_offset = 0;
 	http_client->body_expect_size = 0;
 	string_strcat_printf(&http_client->reply_header, "HTTP/%d.%d %s\r\n", 1, 1, http_status_reasons_get(status_code));
-	string_strcat(&http_client->reply_header, "Via: http_cache\r\n");
+	string_strcat(&http_client->reply_header, "Via: cache_client\r\n");
 	string_strcat(&http_client->reply_header, "\r\n");
 	LOG(LOG_INFO, "%s %s reply=\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), string_buf(&http_client->reply_header));
 }
@@ -1526,10 +1475,8 @@ static int http_server_process_header(struct http_session_t *http_session)
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_client_t *http_client = http_session->http_client;
 	struct http_server_t *http_server = http_session->http_server;
-	struct http_cache_client_t *http_cache_client = http_session->http_cache_client;
 	struct connection_t *connection = http_server->connection;
 	struct http_reply_t *http_reply = http_server->parser.data;
-	struct cache_t *cache = NULL;
 	char buf[256];
 	const char *str = NULL;
 	struct http_content_range_t *content_range = NULL;
@@ -1573,24 +1520,10 @@ static int http_server_process_header(struct http_session_t *http_session)
 	if (http_request->method == HTTP_HEAD) {
 		http_server->body_expect_size = 0;
 	}
-	if (http_cache_client) {
-		cache = http_cache_client->cache;
-		if (http_reply_cacheable(http_reply)) {
-			if (cache->http_reply) {
-				if (cache->http_reply->content_length != http_reply->content_length) {
-					LOG(LOG_ERROR, "%s %s fd=%d old content_length=%"PRId64" new content_length=%"PRId64"\n%s", http_session->epoll_thread->name, string_buf(&http_request->url),
-							connection->fd, cache->http_reply->content_length, http_reply->content_length);
-					http_cache_mark_release(http_session);
-					http_cache_unlock(http_session);
-				}
-			} else {
-				cache->http_reply = http_reply;
-				http_server->parser.data = NULL;
-				http_cache_write_header(http_session);
-			}
-		} else {
-			LOG(LOG_DEBUG, "%s %s fd=%d http_reply_cacheable=0\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-			http_cache_unlock(http_session);
+	if (http_session->cache_client) {
+		if (cache_client_process_header(http_session, http_reply)) {
+			LOG(LOG_ERROR, "%s %s fd=%d cache need abort\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
+			return -1;
 		}
 	}
 	if (http_client) {
@@ -1717,7 +1650,7 @@ static void http_reply_free(struct http_reply_t *http_reply)
 
 static int http_request_cacheable(struct http_request_t *http_request)
 {
-	return 0;
+	return 1;
 }
 
 static int http_reply_cacheable(struct http_reply_t *http_reply)
@@ -1725,33 +1658,131 @@ static int http_reply_cacheable(struct http_reply_t *http_reply)
 	switch (http_reply->status_code) {
 		case 200:
 		case 204:
+		case 206:
 			return 1;
 			break;
 		default:
 			return 0;
 			break;
 	}
-	return 0;
 }
 
-static void http_cache_client_create(struct http_session_t *http_session, struct cache_t *cache)
+static void cache_client_create(struct http_session_t *http_session, struct cache_t *cache)
 {
-	struct http_cache_client_t *http_cache_client = NULL;
-	http_cache_client = http_malloc(sizeof(struct http_cache_client_t));
-	memset(http_cache_client, 0, sizeof(struct http_cache_client_t));
-	http_cache_client->cache = cache;
-	http_session->http_cache_client = http_cache_client;
+	struct cache_client_t *cache_client = NULL;
+	cache_client = http_malloc(sizeof(struct cache_client_t));
+	memset(cache_client, 0, sizeof(struct cache_client_t));
+	cache_client->cache = cache;
+	http_session->cache_client = cache_client;
 }
 
-static void http_cache_client_close(struct http_session_t *http_session)
+static void cache_client_close(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
-	http_free(http_session->http_cache_client);
-	http_session->http_cache_client = NULL;
+	http_free(http_session->cache_client);
+	http_session->cache_client = NULL;
 	if (http_session->http_client == NULL && http_session->http_server == NULL) {
 		LOG(LOG_DEBUG, "%s %s session free\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 		http_session_free(http_session);
 	}
+}
+
+static void http_session_lookup_cache(struct http_session_t *http_session)
+{
+	struct http_request_t *http_request = &http_session->http_request;
+	struct cache_t *cache = NULL;
+	if (http_request_cacheable(http_request)) {
+		cache_table_lock();
+		cache = cache_table_lookup(string_buf(&http_request->url));
+		if (cache == NULL) {
+			cache = cache_alloc(string_buf(&http_request->url));
+			cache->epoll_thread = http_session->epoll_thread;
+			cache->lock++;
+			cache_table_insert(cache);
+			cache_table_unlock();
+			cache_client_create(http_session, cache);
+			http_server_create(http_session, http_request->range);
+			return;
+		} else {
+			cache->lock++;
+			if (cache->epoll_thread == NULL) {
+				cache->epoll_thread = http_session->epoll_thread;
+			}
+			cache_table_unlock();
+			cache_client_create(http_session, cache);
+			if (cache->epoll_thread != http_session->epoll_thread) {
+				http_client_dispatch(http_session);
+			} else {
+				cache_client_read_header(http_session);
+			}
+			return;
+		}
+	} else {
+		http_server_create(http_session, http_request->range);
+		return;
+	}
+}
+
+static int cache_client_process_header(struct http_session_t *http_session, struct http_reply_t *http_reply)
+{
+	struct http_request_t *http_request = &http_session->http_request;
+	struct http_server_t *http_server = http_session->http_server;
+	struct cache_client_t *cache_client = http_session->cache_client;
+	struct cache_t *cache = cache_client->cache;
+	cache = cache_client->cache;
+	if (http_reply_cacheable(http_reply)) {
+		if (cache->http_reply) {
+			if (cache->http_reply->content_length != http_reply->content_length) {
+				LOG(LOG_ERROR, "%s %s old content_length=%"PRId64" new content_length=%"PRId64"\n%s",
+						http_session->epoll_thread->name, string_buf(&http_request->url), cache->http_reply->content_length, http_reply->content_length);
+				cache_client_mark_release(http_session);
+				http_session_unlock_cache(http_session);
+			}
+		} else {
+			cache->http_reply = http_reply;
+			http_server->parser.data = NULL;
+			cache_client_write_header(http_session);
+		}
+	} else {
+		LOG(LOG_DEBUG, "%s %s http_reply_cacheable=0\n%s", http_session->epoll_thread->name, string_buf(&http_request->url));
+		http_session_unlock_cache(http_session);
+	}
+	return 0;
+}
+
+static void http_session_unlock_cache(struct http_session_t *http_session)
+{
+}
+
+
+static void cache_client_read_header(struct http_session_t *http_session)
+{
+}
+
+static void cache_client_write_header(struct http_session_t *http_session)
+{
+	struct http_request_t *http_request = &http_session->http_request;
+	struct cache_client_t *cache_client = http_session->cache_client;
+	struct cache_t *cache = cache_client->cache;
+	struct http_reply_t *http_reply = cache->http_reply;
+	struct http_header_entry_t *header_entry;
+	struct string_t string;
+	string_init_size(&string, 1024);
+	string_strcat_printf(&string, "HTTP/%d.%d %s\r\n", 
+			http_reply->http_major, http_reply->http_minor, http_status_reasons_get(http_reply->status_code));
+	list_for_each_entry(header_entry, &http_reply->header.header_list, header_entry_node) {
+		string_strcat(&string, string_buf(&header_entry->field_string));
+		string_strcat(&string, ": ");
+		string_strcat(&string, string_buf(&header_entry->value_string));
+		string_strcat(&string, "\r\n");
+	}    
+	string_strcat(&string, "\r\n"); 
+	LOG(LOG_INFO, "%s %s reply=\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), string_buf(&string));
+	string_clean(&string);
+}
+
+static void cache_client_mark_release(struct http_session_t *http_session)
+{
 }
 
 void cache_table_create()

@@ -117,10 +117,9 @@ struct aio_thread_t {
 struct aio_t {
 	struct list_head_t node;
 	int fd;
-	struct iovec iovecs[MAX_IOVEC];
-	int count;
 	void (*aio_exec)(struct aio_t *aio);
 	void (*aio_done)(struct aio_t *aio);
+	void *aio_data;
 	struct epoll_thread_t *epoll_thread;
 };
 

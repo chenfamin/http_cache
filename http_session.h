@@ -41,7 +41,7 @@ struct cache_t {
 	int header_size;
 };
 
-struct http_cache_client_t {
+struct cache_client_t {
 	struct cache_t *cache;
 	int64_t body_offset;
 	int64_t body_write_size;
@@ -84,7 +84,7 @@ struct http_session_t {
 	struct http_request_t http_request;
 	struct mem_list_t post_list;
 	struct http_client_t *http_client;
-	struct http_cache_client_t *http_cache_client;
+	struct cache_client_t *cache_client;
 	struct http_server_t *http_server;
 	int abort;
 	struct mem_list_t body_list;
