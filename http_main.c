@@ -91,6 +91,7 @@ void* epoll_thread_loop(void *arg)
 	struct epoll_event event_result[MAX_EPOLL_FD];
 	int nfds = 0;
 	int i = 0;
+	prctl(PR_SET_NAME, epoll_thread->name, 0, 0, 0);
 	while (1) {
 		INIT_LIST_HEAD(&ready_list);
 		list_splice_init(&epoll_thread->ready_list, &ready_list);
@@ -196,6 +197,7 @@ void* aio_thread_loop(void *arg)
 	struct aio_thread_t *aio_thread = arg;
 	struct epoll_thread_t *epoll_thread = NULL;
 	struct aio_t *aio = NULL;
+	prctl(PR_SET_NAME, aio_thread->name, 0, 0, 0);
 	while (1) {
 		pthread_mutex_lock(&aio_list->mutex);
 		if (list_empty(&aio_list->list)) {
