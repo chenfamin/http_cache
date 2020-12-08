@@ -25,24 +25,26 @@ struct aio_list_t* aio_list_get()
 	return aio_list;
 }
 
+void aio_list_broadcast()
+{
+	pthread_mutex_lock(&aio_list->mutex);
+	pthread_cond_broadcast(&aio_list->cond);
+	pthread_mutex_unlock(&aio_list->mutex);
+}
+
 void aio_summit(struct aio_t *aio)
 {
+	pthread_mutex_lock(&aio_list->mutex);
+	list_add_tail(&aio->node, &aio_list->list);
+	pthread_cond_signal(&aio_list->cond);
+	pthread_mutex_unlock(&aio_list->mutex);
 }
 
-void aio_create_cache_file(struct aio_t *aio)
+int aio_busy(struct aio_t *aio)
 {
-}
-
-void aio_open(struct aio_t *aio)
-{
-}
-
-void aio_pread(struct aio_t *aio)
-{
-}
-void aio_pwrite(struct aio_t *aio)
-{
-}
-void aio_close(struct aio_t *aio)
-{
+	if (aio->aio_exec) {
+		return 1;
+	} else {
+		return 0;
+	}
 }

@@ -19,7 +19,6 @@ static void sig_pipe(int sig);
 static void epoll_thread_process_events(struct epoll_thread_t *epoll_thread, struct list_head_t *ready_list);
 static void epoll_thread_pipe_read(struct connection_t *connection);
 static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread);
-static void aio_thread_broadcast();
 
 static void sig_int(int sig)
 {
@@ -245,15 +244,6 @@ void* aio_thread_loop(void *arg)
 	return NULL;
 }
 
-static void aio_thread_broadcast()
-{
-	struct aio_list_t *aio_list = NULL;
-	aio_list = aio_list_get();
-	pthread_mutex_lock(&aio_list->mutex);
-	pthread_cond_broadcast(&aio_list->cond);
-	pthread_mutex_unlock(&aio_list->mutex);
-};
-
 int main()
 {
 	int i = 0;
@@ -301,7 +291,7 @@ int main()
 		pthread_join(epoll_threads[i].tid, NULL);
 	}
 	aio_thread_exit = 1;
-	aio_thread_broadcast();
+	aio_list_broadcast();
 	for (i = 0; i < aio_threads_num; i++) {
 		pthread_join(aio_threads[i].tid, NULL);
 	}

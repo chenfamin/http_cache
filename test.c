@@ -10,6 +10,7 @@ struct cache_index_t {
 	int header_size;// cache头部大小
 	uint32_t flags;//缓存标志，是否缓存完整，是否永久缓存都用此标志
 	unsigned char url[256];//放最后一项，未使用完的字符可以做其他用途,长度不够截短
+	int64 expand;//扩展选项，可选
 };
 
 struct cache_header_t {
@@ -29,10 +30,10 @@ struct cache_t {
 	int64_t file_size;//缓存文件大小，chunked未完整前记录-1，有cl的记录cl
 	int header_size;// cache头部大小
 	uint32_t flags;//缓存标志，是否缓存完整，是否永久缓存都用此标志
-	char *url;
+	char *url;//完整url
 
 	void *reply_header;//保存解析后的响应头等信息
-	void *mem_obj;//内存缓存相关
+	void *mem_obj;//内存缓存相关，包含分段缓存的位图信息，以及是否缓存完整等
 	void *io_stat;// io 打开 读写 关闭等
 	void *lru;//lru链表 区分普通缓存和永久缓存
 

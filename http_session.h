@@ -32,13 +32,6 @@ struct cache_table_t {
 	int64_t count;
 };
 
-struct cache_file_t {
-	int fd;
-	struct list_head_t delay_list;
-	struct aio_t aio;
-	int busy;
-};
-
 struct cache_t {
 	char *key;
 	struct rb_node rb_node;
@@ -48,7 +41,8 @@ struct cache_t {
 	struct http_reply_t *http_reply;
 	int header_size;
 	struct cache_file_t *cache_file;
-	char *path;
+	int64_t file_number;
+	struct aio_t *aio;
 };
 
 struct cache_client_t {
@@ -56,7 +50,6 @@ struct cache_client_t {
 	int64_t body_offset;
 	int64_t body_write_size;
 	struct aio_t aio;
-	int busy;
 };
 
 struct http_client_t {
