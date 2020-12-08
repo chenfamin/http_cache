@@ -1,59 +1,46 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#if 0
-struct buffer_t {
-	size_t size;
-	size_t len;
-	size_t ref;
-	char *buf;
+#include <stdint.h>
+#include <time.h>
+struct cache_index_t {
+	unsigned char key[16];//放第一项，方便匹配
+	int64_t file_number;//目录和文件编号，可以转换目录和文件名
+	time_t create_time;
+	time_t lastref_time;
+	int64_t file_size;//缓存文件大小，chunked未完整前记录-1，有cl的记录cl
+	int header_size;// cache头部大小
+	uint32_t flags;//缓存标志，是否缓存完整，是否永久缓存都用此标志
+	unsigned char url[256];//放最后一项，未使用完的字符可以做其他用途,长度不够截短
 };
 
-#define is_power_of_2(x)	((x) != 0 && (((x) & ((x) - 1)) == 0))
-struct fifo_t {
-	void **data;
-	unsigned int size;
-	unsigned int in;
-	unsigned int out;
+struct cache_header_t {
+	unsigned char key[16];
+	int url_size;
+	char url[url_size];
+	int http_header_size;
+	char http_header[http_header_size];
 };
 
-void fifo_init(struct fifo_t *fifo, unsigned int size)
-{
-	assert(is_power_of_2(size));
-	fifo->data = http_malloc(sizeof(void*) * size);
-	memset(fifo->data, 0, sizeof(void*) * size);
-	fifo->size = size;
-	fifo->in = 0;
-	fifo->out = 0;
-}
+struct cache_t {
+	unsigned char key[16];//放第一项，方便匹配
+	int64_t file_number;//目录和文件编号，可以转换目录和文件名
+	time_t create_time;
+	time_t lastref_time;
+	int ref_count;//访问次数
+	int64_t file_size;//缓存文件大小，chunked未完整前记录-1，有cl的记录cl
+	int header_size;// cache头部大小
+	uint32_t flags;//缓存标志，是否缓存完整，是否永久缓存都用此标志
+	char *url;
 
-unsigned int fifo_length(struct fifo_t *fifo)
-{
-	return fifo->in - fifo->out;
-}
+	void *reply_header;//保存解析后的响应头等信息
+	void *mem_obj;//内存缓存相关
+	void *io_stat;// io 打开 读写 关闭等
+	void *lru;//lru链表 区分普通缓存和永久缓存
 
-void fifo_push(struct fifo_t *fifo, void *buf)
-{
-	assert(fifo->size > fifo->in - fifo->out);
-	fifo->data[(fifo->in & (fifo->size - 1))] = buf;
-	fifo->in++;
-}
-
-void fifo_pop(struct fifo_t *fifo)
-{
-	assert(fifo->in > fifo->out);
-	fifo->data[(fifo->out & (fifo->size - 1))] = NULL;
-	fifo->out++;
-}
-#endif
+};
 
 int main()
 {
-	int n = 0;
-	char buf[5];
-	buf[4] = '5';
-	n = snprintf(buf, sizeof(buf), "12345678");
-	printf("n=%d buf=%s\n", n, buf);
+	printf("size=%d\n", sizeof(struct cache_index_t));
 	return 0;
 }
+

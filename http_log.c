@@ -40,7 +40,7 @@ void log_file_open()
 	log_file = http_malloc(sizeof(struct log_file_t));
 	memset(log_file, 0, sizeof(struct log_file_t));
 	//log_file->fd = open("debug.log", O_WRONLY|O_CREAT|O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-	if (log_file->fd < 0) {
+	if (log_file->fd <= 0) {
 		log_file->fd = 1;// stdout
 	}
 	pthread_mutex_init(&log_file->mutex, NULL);
