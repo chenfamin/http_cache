@@ -149,7 +149,7 @@ static void epoll_thread_process_events(struct epoll_thread_t *epoll_thread, str
 	while (!list_empty(&done_list)) {
 		aio = d_list_head(&done_list, struct aio_t, node);
 		list_del(&aio->node);
-		aio->aio_done(aio);
+		aio_done(aio);
 	}
 }
 
@@ -213,7 +213,6 @@ void aio_thread_clean(struct aio_thread_t *aio_thread)
 void* aio_thread_loop(void *arg)
 {
 	struct aio_thread_t *aio_thread = arg;
-	struct epoll_thread_t *epoll_thread = NULL;
 	struct aio_list_t *aio_list = aio_thread->aio_list;
 	struct aio_t *aio = NULL;
 	while (1) {
@@ -234,12 +233,7 @@ void* aio_thread_loop(void *arg)
 		aio = d_list_head(&aio_list->list, struct aio_t, node);
 		list_del(&aio->node);
 		pthread_mutex_unlock(&aio_list->mutex);
-
-		epoll_thread = aio->epoll_thread;
-		aio->aio_exec(aio);
-		pthread_mutex_lock(&epoll_thread->done_mutex);
-		list_add_tail(&aio->node, &epoll_thread->done_list);
-		pthread_mutex_unlock(&epoll_thread->done_mutex);
+		aio_exec(aio);
 	}
 	return NULL;
 }

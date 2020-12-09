@@ -16,9 +16,10 @@ struct cache_index_t {
 	int header_size;// cache头部大小
 	uint32_t flags;//缓存标志，是否缓存完整，是否永久缓存都用此标志
 	unsigned char url[256];//放最后一项，未使用完的字符可以做其他用途,长度不够截短
-	int64 expand;//扩展选项，可选
+	int64_t expand;//扩展选项，可选
 };
 
+/*
 struct cache_header_t {
 	unsigned char key[16];
 	int url_size;
@@ -26,7 +27,7 @@ struct cache_header_t {
 	int http_header_size;
 	char http_header[http_header_size];
 };
-
+*/
 struct cache_t {
 	unsigned char key[16];//放第一项，方便匹配
 	int64_t file_number;//目录和文件编号，可以转换目录和文件名
@@ -46,7 +47,7 @@ struct cache_t {
 
 int main()
 {
-	printf("size=%d\n", sizeof(struct cache_index_t));
+	printf("index_size=%d cache_size=%d\n", sizeof(struct cache_index_t), sizeof(struct cache_t));
 	return 0;
 }
 

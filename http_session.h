@@ -40,7 +40,6 @@ struct cache_t {
 
 	struct http_reply_t *http_reply;
 	int header_size;
-	struct cache_file_t *cache_file;
 	int64_t file_number;
 	struct aio_t *aio;
 };
