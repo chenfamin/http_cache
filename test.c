@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
+/*
+   1 如果纯粹内存索引，即启动的时候将缓存索引全部读到内存中，那么以file_number * sizeof(struct cache_index_t)计算位置
+   2 如果以btree- 和 key作为磁盘索引，那么可以不一次将索引信息都加载到内存，每次内存查找不到需要做磁盘查找，性能较低，复杂度较高
+     
+*/
+
 struct cache_index_t {
 	unsigned char key[16];//放第一项，方便匹配
 	int64_t file_number;//目录和文件编号，可以转换目录和文件名
@@ -36,7 +42,6 @@ struct cache_t {
 	void *mem_obj;//内存缓存相关，包含分段缓存的位图信息，以及是否缓存完整等
 	void *io_stat;// io 打开 读写 关闭等
 	void *lru;//lru链表 区分普通缓存和永久缓存
-
 };
 
 int main()
