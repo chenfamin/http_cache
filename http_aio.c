@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 500
 #include <unistd.h>
+#include <sys/uio.h>
 #include "http_aio.h"
 
 
@@ -75,13 +76,31 @@ int aio_busy(struct aio_t *aio)
 
 void aio_open(struct aio_t *aio)
 {
-	aio->return_ret = open(aio->buf, aio->flags, aio->mode);
+	aio->return_ret = open(aio->path, aio->flags, aio->mode);
 	aio->return_errno = errno;
 }
 
-void aio_pwrite(struct aio_t *aio)
+void aio_pwritev(struct aio_t *aio)
 {
-	aio->return_ret = pwrite(aio->fd, aio->buf, aio->buf_len, aio->offset);
+	int64_t offset = aio->offset;
+	ssize_t nwrite = 0;
+	ssize_t n;
+	int i = 0;
+	for (i = 0; i < aio->iovec_count; i++) {
+		n = 0;
+		while (n < aio->iovec[i].iov_len) {
+			nwrite = pwrite(aio->fd, aio->iovec[i].iov_base + n, aio->iovec[i].iov_len - n, aio->offset);
+			if (nwrite > 0) {
+				n += nwrite;
+				aio->offset += nwrite;
+			} else {
+				aio->return_ret = (int)(aio->offset - offset);
+				aio->return_errno = errno;
+				return;
+			}
+		}
+	}
+	aio->return_ret = (int)(aio->offset - offset);
 	aio->return_errno = errno;
 }
 

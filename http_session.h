@@ -53,8 +53,7 @@ struct cache_t {
 
 struct cache_client_t {
 	struct cache_t *cache;
-	int64_t body_offset;
-	int64_t body_write_size;
+	int64_t body_current_offset;
 	struct aio_t aio;
 };
 

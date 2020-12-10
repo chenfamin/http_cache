@@ -46,7 +46,6 @@
 
 #define MAX_LOOP 4
 
-#define MAX_IOVEC 4
 #define PAGE_SIZE (1024 * 4)
 #define PAGE_LIST_MAX_SIZE (1024 * 128)
 #define DEFAULT_STRING_SIZE 1024
@@ -143,6 +142,7 @@ void mem_list_resize_first_node(struct mem_list_t *mem_list, size_t size);
 int64_t mem_list_size(struct mem_list_t *mem_list);
 void mem_list_set_low(struct mem_list_t *mem_list, int64_t low);
 size_t mem_list_read_buf(struct mem_list_t *mem_list, char **buf, int64_t offset);
+int mem_list_readv_buf(struct mem_list_t *mem_list, struct iovec *iovec, int count, int64_t offset);
 size_t mem_list_write_buf(struct mem_list_t *mem_list, char **buf);
 void mem_list_append(struct mem_list_t *mem_list, const char *buf, size_t len);
 void mem_list_free_to(struct mem_list_t *mem_list, int64_t offset);

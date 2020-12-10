@@ -3,6 +3,8 @@
 
 #include "http.h"
 
+#define MAX_IOVEC 4
+
 enum aio_status_t {
 	AIO_STATUS_DONE,
 	AIO_STATUS_SUMMIT,
@@ -14,8 +16,9 @@ struct aio_t {
 	int fd;
 	int flags;
 	mode_t mode;
-	void *buf;
-	size_t buf_len;
+	char *path;
+	struct iovec iovec[MAX_IOVEC];
+	int iovec_count;
 	int64_t offset;
 	int return_ret;
 	int return_errno;
@@ -43,7 +46,7 @@ void aio_summit_done(struct aio_t *aio);
 int aio_busy(struct aio_t *aio);
 
 void aio_open(struct aio_t *aio);
-void aio_pwrite(struct aio_t *aio);
+void aio_pwritev(struct aio_t *aio);
 void aio_close(struct aio_t *aio);
 
 #endif

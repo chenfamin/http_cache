@@ -58,6 +58,7 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 	connection->epoll_thread = epoll_thread;
 	epoll_thread->pipe_read_connection = connection;
 	epoll_thread->pipe_write_fd = event_pipe[1];
+	connection_read_enable(connection, epoll_thread_pipe_read);
 	epoll_thread->dns_session = dns_session_create(epoll_thread);
 }
 
@@ -187,6 +188,7 @@ static void epoll_thread_pipe_read(struct connection_t *connection)
 			}
 			break;
 		}
+		LOG(LOG_DEBUG, "%s fd=%d nread=%d\n", epoll_thread->name, connection->fd, nread);
 	} while (loop < MAX_LOOP);
 	connection_read_enable(connection, epoll_thread_pipe_read);
 }
