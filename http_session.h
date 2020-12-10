@@ -32,6 +32,13 @@ struct cache_table_t {
 	int64_t count;
 };
 
+struct cache_aio_t {
+	struct list_head_t delay_list;
+	unsigned char *bitmap;
+	int64_t file_number;// alloc or pass file_number
+	struct aio_t aio;
+};
+
 struct cache_t {
 	char *key;
 	struct rb_node rb_node;
@@ -41,7 +48,7 @@ struct cache_t {
 	struct http_reply_t *http_reply;
 	int header_size;
 	int64_t file_number;
-	struct aio_t *aio;
+	struct cache_aio_t *cache_aio;
 };
 
 struct cache_client_t {

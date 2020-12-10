@@ -1,4 +1,7 @@
+#define _XOPEN_SOURCE 500
+#include <unistd.h>
 #include "http_aio.h"
+
 
 static struct aio_list_t *aio_list = NULL;
 
@@ -32,28 +35,15 @@ void aio_list_broadcast()
 	pthread_mutex_unlock(&aio_list->mutex);
 }
 
-void aio_summit_exec(struct aio_t *aio, struct aio_t *aio_delay)
+void aio_summit_exec(struct aio_t *aio)
 {
 	assert(aio->status == AIO_STATUS_DONE);
 	assert(aio->epoll_thread != NULL);
 	aio->status = AIO_STATUS_SUMMIT;
-	if (aio_delay) {
-		list_add_tail(&aio->node, &aio_delay->delay_list);
-	} else {
-		pthread_mutex_lock(&aio_list->mutex);
-		list_add_tail(&aio->node, &aio_list->list);
-		pthread_cond_signal(&aio_list->cond);
-		pthread_mutex_unlock(&aio_list->mutex);
-	}
-}
-
-void aio_summit_done(struct aio_t *aio)
-{
-	struct epoll_thread_t *epoll_thread = aio->epoll_thread;
-	pthread_mutex_lock(&epoll_thread->done_mutex);
-	list_add_tail(&aio->node, &epoll_thread->done_list);
-	pthread_mutex_unlock(&epoll_thread->done_mutex);
-	epoll_thread_pipe_signal(epoll_thread);
+	pthread_mutex_lock(&aio_list->mutex);
+	list_add_tail(&aio->node, &aio_list->list);
+	pthread_cond_signal(&aio_list->cond);
+	pthread_mutex_unlock(&aio_list->mutex);
 }
 
 void aio_exec(struct aio_t *aio)
@@ -69,7 +59,34 @@ void aio_done(struct aio_t *aio)
 	aio->done(aio);
 }
 
+void aio_summit_done(struct aio_t *aio)
+{
+	struct epoll_thread_t *epoll_thread = aio->epoll_thread;
+	pthread_mutex_lock(&epoll_thread->done_mutex);
+	list_add_tail(&aio->node, &epoll_thread->done_list);
+	pthread_mutex_unlock(&epoll_thread->done_mutex);
+	epoll_thread_pipe_signal(epoll_thread);
+}
+
 int aio_busy(struct aio_t *aio)
 {
-	return aio->status == AIO_STATUS_DONE;
+	return aio->status > AIO_STATUS_DONE;
+}
+
+void aio_open(struct aio_t *aio)
+{
+	aio->return_ret = open(aio->buf, aio->flags, aio->mode);
+	aio->return_errno = errno;
+}
+
+void aio_pwrite(struct aio_t *aio)
+{
+	aio->return_ret = pwrite(aio->fd, aio->buf, aio->buf_len, aio->offset);
+	aio->return_errno = errno;
+}
+
+void aio_close(struct aio_t *aio)
+{
+	aio->return_ret = close(aio->fd);
+	aio->return_errno = errno;
 }

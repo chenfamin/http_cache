@@ -9,9 +9,11 @@ enum aio_status_t {
 };
 
 struct aio_t {
-	struct list_head_t delay_list;
 	struct list_head_t node;
+	enum aio_status_t status;
 	int fd;
+	int flags;
+	mode_t mode;
 	void *buf;
 	size_t buf_len;
 	int64_t offset;
@@ -20,7 +22,6 @@ struct aio_t {
 	void (*exec)(struct aio_t *aio);
 	void (*done)(struct aio_t *aio);
 	void *callback_data;
-	enum aio_status_t status;
 	struct epoll_thread_t *epoll_thread;
 };
 
@@ -35,10 +36,14 @@ void aio_list_free();
 struct aio_list_t* aio_list_get();
 void aio_list_broadcast();
 
-void aio_summit_exec(struct aio_t *aio, struct aio_t *aio_delay);
-void aio_summit_done(struct aio_t *aio);
+void aio_summit_exec(struct aio_t *aio);
 void aio_exec(struct aio_t *aio);
 void aio_done(struct aio_t *aio);
+void aio_summit_done(struct aio_t *aio);
 int aio_busy(struct aio_t *aio);
+
+void aio_open(struct aio_t *aio);
+void aio_pwrite(struct aio_t *aio);
+void aio_close(struct aio_t *aio);
 
 #endif
