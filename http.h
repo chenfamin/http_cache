@@ -67,19 +67,6 @@ struct continuation_t {
 	void *buf;
 };
 
-struct mem_node_t {
-	struct list_head_t node;
-	size_t size;
-	size_t len;
-	char *buf;
-};
-
-struct mem_list_t {
-	int64_t low;
-	int64_t hight;
-	struct list_head_t list;
-};
-
 struct string_t {
 	size_t size;
 	size_t len;
@@ -126,27 +113,6 @@ void string_strncat(struct string_t *string, const char *s, size_t len);
 void string_strcat_printf(struct string_t *string, const char *format, ...);
 size_t string_strlen(const struct string_t *string);
 char* string_buf(const struct string_t *string);
-
-struct mem_node_t *mem_node_alloc(size_t size);
-struct mem_node_t* mem_node_realloc(struct mem_node_t *mem_node, size_t size);
-char* mem_node_buf(struct mem_node_t *mem_node);
-size_t mem_node_size(struct mem_node_t *mem_node);
-size_t mem_node_len(struct mem_node_t *mem_node);
-int mem_node_is_full(struct mem_node_t *mem_node);
-void mem_node_add_len(struct mem_node_t *mem_node, size_t len);
-void mem_node_append(struct mem_node_t *mem_node, const char *buf, size_t len);
-void mem_node_free(struct mem_node_t *mem_node);
-
-void mem_list_init(struct mem_list_t *mem_list);
-void mem_list_resize_first_node(struct mem_list_t *mem_list, size_t size);
-int64_t mem_list_size(struct mem_list_t *mem_list);
-void mem_list_set_low(struct mem_list_t *mem_list, int64_t low);
-size_t mem_list_read_buf(struct mem_list_t *mem_list, char **buf, int64_t offset);
-int mem_list_readv_buf(struct mem_list_t *mem_list, struct iovec *iovec, int count, int64_t offset);
-size_t mem_list_write_buf(struct mem_list_t *mem_list, char **buf);
-void mem_list_append(struct mem_list_t *mem_list, const char *buf, size_t len);
-void mem_list_free_to(struct mem_list_t *mem_list, int64_t offset);
-void mem_list_clean(struct mem_list_t *mem_list);
 
 int socket_non_block(int fd);
 char *http_strdup(const char *s);

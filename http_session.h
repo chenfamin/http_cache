@@ -2,6 +2,7 @@
 #define HTTP_SESSION_H
 
 #include "http.h"
+#include "http_mem.h"
 #include "http_aio.h"
 #include "http_header.h"
 
@@ -54,6 +55,9 @@ struct cache_t {
 struct cache_client_t {
 	struct cache_t *cache;
 	int64_t body_current_offset;
+	int64_t body_low;
+	int64_t body_high;
+	struct buffer_list_t body_list;
 	struct aio_t aio;
 };
 
@@ -90,12 +94,16 @@ struct http_server_t {
 struct http_session_t {
 	struct list_head_t node;// for epoll_thread->http_session_list
 	struct http_request_t http_request;
-	struct mem_list_t post_list;
+	int64_t post_low;
+	int64_t post_hight;
+	struct buffer_list_t post_list;
 	struct http_client_t *http_client;
 	struct cache_client_t *cache_client;
 	struct http_server_t *http_server;
 	int abort;
-	struct mem_list_t body_list;
+	int64_t body_low;
+	int64_t body_hight;
+	struct buffer_list_t body_list;
 	struct epoll_thread_t *epoll_thread;
 };
 

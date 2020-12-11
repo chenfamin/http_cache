@@ -11,7 +11,6 @@ static struct log_file_t *log_file = NULL;
 
 void log_printf(int level, const char *file, int line, const char *function, const char *fmt, ...)
 {
-	return;
 	if (level > LOG_DEBUG) {
 		return;
 	}

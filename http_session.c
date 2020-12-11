@@ -27,13 +27,14 @@ static int reply_on_message_complete(http_parser *hp);
 static void http_session_accept(struct connection_t *connection);
 static void http_session_close(struct http_session_t *http_session);
 static void http_session_free(struct http_session_t *http_session);
-static void http_session_fill_post_list(struct http_session_t *http_session);
+static void http_session_fill_post(struct http_session_t *http_session);
 static void http_session_free_post_list(struct http_session_t *http_session);
 static void http_session_fill_body_list(struct http_session_t *http_session);
 static void http_session_free_body_list(struct http_session_t *http_session);
 static void http_client_create(struct http_session_t *http_session, struct connection_t *connection);
 static void http_client_check_close(struct http_session_t *http_session, int error_code);
 static void http_client_close(struct http_session_t *http_session, int error_code);
+static void http_session_copy_post(struct http_session_t *http_session, const char *buf, size_t len);
 static void http_client_read_header(struct connection_t *connection);
 static void http_client_read_body(struct connection_t *connection);
 static int http_client_process_header(struct http_session_t *http_session);
@@ -76,8 +77,8 @@ static void cache_client_aio_summit(struct http_session_t *http_session);
 static void cache_aio_open(struct cache_t *cache);
 static void cache_aio_open_exec(struct aio_t *aio);
 static void cache_aio_open_done(struct aio_t *aio);
-static void cache_aio_close_done(struct aio_t *aio);
-static void cache_aio_close(struct cache_t *cache);
+//static void cache_aio_close_done(struct aio_t *aio);
+//static void cache_aio_close(struct cache_t *cache);
 
 static int cache_table_lock();
 static int cache_table_unlock();
@@ -188,207 +189,6 @@ size_t string_strlen(const struct string_t *string)
 char* string_buf(const struct string_t *string)
 {
 	return string->buf;
-}
-
-struct mem_node_t* mem_node_alloc(size_t size)
-{
-	struct mem_node_t *mem_node = NULL;
-	mem_node = http_malloc(sizeof(struct mem_node_t) + size);
-	mem_node->size = size;
-	mem_node->len = 0;
-	mem_node->buf = (char *)mem_node + sizeof(struct mem_node_t);
-	return mem_node;
-}
-
-struct mem_node_t* mem_node_realloc(struct mem_node_t *mem_node, size_t size)
-{
-	assert(mem_node->len == 0);
-	if (size > mem_node->size) {
-		mem_node_free(mem_node);
-		mem_node = mem_node_alloc(size);
-	}
-	return mem_node;
-}
-
-char* mem_node_buf(struct mem_node_t *mem_node)
-{
-	return mem_node->buf;
-}
-
-size_t mem_node_size(struct mem_node_t *mem_node)
-{
-	return mem_node->size;
-}
-
-size_t mem_node_len(struct mem_node_t *mem_node)
-{
-	return mem_node->len;
-}
-
-int mem_node_is_full(struct mem_node_t *mem_node)
-{
-	assert(mem_node->size > 0 && mem_node->size >= mem_node->len);
-	return mem_node->len == mem_node->size;
-}
-
-void mem_node_add_len(struct mem_node_t *mem_node, size_t len)
-{
-	assert(mem_node->size >= mem_node->len + len);
-	mem_node->len += len;
-}
-
-void mem_node_append(struct mem_node_t *mem_node, const char *buf, size_t len)
-{
-	assert(mem_node->size >= mem_node->len + len);
-	memcpy(mem_node->buf + mem_node->len, buf, len);
-	mem_node->len += len;
-}
-
-void mem_node_free(struct mem_node_t *mem_node)
-{
-	http_free(mem_node);
-}
-
-void mem_list_init(struct mem_list_t *mem_list)
-{
-	struct mem_node_t *mem_node = NULL;
-	mem_list->low = 0;
-	mem_list->hight = 0;
-	INIT_LIST_HEAD(&mem_list->list);
-	mem_node = mem_node_alloc(PAGE_SIZE);
-	list_add_tail(&mem_node->node, &mem_list->list);
-}
-
-void mem_list_resize_first_node(struct mem_list_t *mem_list, size_t size)
-{
-	struct mem_node_t *mem_node = NULL;
-	assert(!list_empty(&mem_list->list));
-	assert(mem_list->low == mem_list->hight);
-	mem_node = d_list_tail(&mem_list->list, struct mem_node_t, node);
-	list_del(&mem_node->node);
-	mem_node = mem_node_realloc(mem_node, size);
-	list_add_tail(&mem_node->node, &mem_list->list);
-}
-
-int64_t mem_list_size(struct mem_list_t *mem_list)
-{
-	return mem_list->hight - mem_list->low;
-}
-
-void mem_list_set_low(struct mem_list_t *mem_list, int64_t low)
-{
-	assert(mem_list->low == mem_list->hight);
-	mem_list->low = low;
-	mem_list->hight = low;
-}
-
-size_t mem_list_read_buf(struct mem_list_t *mem_list, char **buf, int64_t offset)
-{
-	struct mem_node_t *mem_node = NULL;
-	int64_t low = mem_list->low;
-	assert(!list_empty(&mem_list->list));
-	assert(offset >= mem_list->low && offset < mem_list->hight);
-	list_for_each_entry(mem_node, &mem_list->list, node) {
-		if (low + mem_node_len(mem_node) > offset) {
-			*buf = mem_node_buf(mem_node) + (int)(offset - low);
-			return mem_node_len(mem_node) - (int)(offset - low);
-		}
-		low += mem_node_len(mem_node);
-	}
-	assert(0);
-	return 0;
-}
-
-int mem_list_readv_buf(struct mem_list_t *mem_list, struct iovec *iovec, int count, int64_t offset)
-{
-	int i = 0;
-	struct mem_node_t *mem_node = NULL;
-	int64_t low = mem_list->low;
-	assert(!list_empty(&mem_list->list));
-	assert(offset >= mem_list->low && offset < mem_list->hight);
-	list_for_each_entry(mem_node, &mem_list->list, node) {
-		if (low + mem_node_len(mem_node) > offset) {
-			iovec[i].iov_base = mem_node_buf(mem_node) + (int)(offset - low);
-			iovec[i].iov_len = mem_node_len(mem_node) - (int)(offset - low);
-			offset += iovec[i].iov_len;
-			i++;
-			if (i == count) {
-				break;
-			}
-		}
-		low += mem_node_len(mem_node);
-	}
-	return i;
-}
-
-size_t mem_list_write_buf(struct mem_list_t *mem_list, char **buf)
-{
-	struct mem_node_t *mem_node = NULL;
-	assert(!list_empty(&mem_list->list));
-	mem_node = d_list_tail(&mem_list->list, struct mem_node_t, node);
-	assert(mem_node_size(mem_node) > mem_node_len(mem_node));
-	*buf = mem_node_buf(mem_node) + mem_node_len(mem_node);
-	return mem_node_size(mem_node) - mem_node_len(mem_node);
-}
-
-void mem_list_append(struct mem_list_t *mem_list, const char *buf, size_t len)
-{
-	struct mem_node_t *mem_node = NULL;
-	size_t ncopy = 0;
-	assert(!list_empty(&mem_list->list));
-	mem_node = d_list_tail(&mem_list->list, struct mem_node_t, node);
-	if (buf == NULL) {
-		mem_node_add_len(mem_node, len);
-		if (mem_node_is_full(mem_node)) {
-			mem_node = mem_node_alloc(PAGE_SIZE);
-			list_add_tail(&mem_node->node, &mem_list->list);
-		}
-		mem_list->hight += len;
-	} else {
-		while (len > 0) {
-			ncopy = mem_node_size(mem_node) - mem_node_len(mem_node);
-			if (ncopy > len) {
-				ncopy = len;
-			}
-			mem_node_append(mem_node, buf, ncopy);
-			buf += ncopy;	
-			len -= ncopy;
-			if (mem_node_is_full(mem_node)) {
-				mem_node = mem_node_alloc(PAGE_SIZE);
-				list_add_tail(&mem_node->node, &mem_list->list);
-			}
-			mem_list->hight += ncopy;
-		}
-		assert(len == 0);
-	}
-}
-
-void mem_list_free_to(struct mem_list_t *mem_list, int64_t offset)
-{
-	struct mem_node_t *mem_node = NULL;
-	assert(!list_empty(&mem_list->list));
-	assert(offset >= mem_list->low);
-	while (!list_empty(&mem_list->list)) {
-		mem_node = d_list_head(&mem_list->list, struct mem_node_t, node);
-		if (mem_node_is_full(mem_node) && offset >= mem_list->low + mem_node_len(mem_node)) {
-			mem_list->low += mem_node_len(mem_node);
-			list_del(&mem_node->node);
-			mem_node_free(mem_node);
-		} else {
-			break;
-		}
-	}
-}
-
-void mem_list_clean(struct mem_list_t *mem_list)
-{
-	struct mem_node_t *mem_node = NULL;
-	while (!list_empty(&mem_list->list)) {
-		mem_node = d_list_head(&mem_list->list, struct mem_node_t, node);
-		list_del(&mem_node->node);
-		mem_list->low += mem_node_len(mem_node);
-		mem_node_free(mem_node);
-	}
 }
 
 char *http_strdup(const char *s)
@@ -669,8 +469,8 @@ static void http_session_accept(struct connection_t *connection)
 	memset(http_session, 0, sizeof(struct http_session_t));
 	http_header_init(&http_session->http_request.header);
 	string_init_size(&http_session->http_request.url, 1024);
-	mem_list_init(&http_session->post_list);
-	mem_list_init(&http_session->body_list);
+	buffer_list_init(&http_session->post_list, PAGE_LIST_MAX_SIZE / PAGE_SIZE);
+	buffer_list_init(&http_session->body_list, PAGE_LIST_MAX_SIZE / PAGE_SIZE);
 	http_session->epoll_thread = epoll_thread;
 	list_add_tail(&http_session->node, &epoll_thread->http_session_list);
 	http_client_create(http_session, new_connection);
@@ -711,105 +511,36 @@ static void http_session_close(struct http_session_t *http_session)
 static void http_session_free(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
+	struct buffer_t *buffer = NULL;
 	assert(http_session->cache_client == NULL);
 	string_clean(&http_request->url);
 	http_header_clean(&http_request->header);
 	if (http_request->range) {
 		http_free(http_request->range);
 	}
-	mem_list_clean(&http_session->post_list);
-	mem_list_clean(&http_session->body_list);
+	while (!buffer_list_empty(&http_session->post_list)) {
+		buffer_list_pop(&http_session->post_list, (void**)&buffer);
+		buffer_unref(buffer);
+	}
+	buffer_list_clean(&http_session->post_list);
+	while (!buffer_list_empty(&http_session->body_list)) {
+		buffer_list_pop(&http_session->body_list, (void **)&buffer);
+		buffer_unref(buffer);
+	}
+	buffer_list_clean(&http_session->body_list);
 	http_free(http_session);
 }
 
-static void http_session_fill_post_list(struct http_session_t *http_session)
+static void http_session_fill_post(struct http_session_t *http_session)
 {
 	struct http_server_t *http_server = http_session->http_server;
 	int64_t body_send_size = -1;
-	int buf_empty = 0;
 	if (http_server && http_server->connection) {
 		if (http_server->request_send_size >= string_strlen(&http_server->request_header)) {
 			body_send_size = http_server->request_send_size - string_strlen(&http_server->request_header);
-			buf_empty = http_session->post_list.hight > body_send_size? 0:1;
-			if (!buf_empty) {
+			if (http_session->post_hight > body_send_size) {
 				connection_write_enable(http_server->connection, http_server_write);
 			}
-		}
-	}
-}
-
-static void http_session_free_post_list(struct http_session_t *http_session)
-{
-	struct http_request_t *http_request = &http_session->http_request;
-	struct http_client_t *http_client = http_session->http_client;
-	struct http_server_t *http_server = http_session->http_server;
-	int64_t pos = http_session->post_list.hight;
-	if (http_server) {
-		if (http_server->request_send_size >= string_strlen(&http_server->request_header)) {
-			pos = http_server->request_send_size - string_strlen(&http_server->request_header);
-		} else {
-			pos = 0;
-		}
-	}
-	mem_list_free_to(&http_session->post_list, pos);
-	if (http_client) {
-		if (http_request->parse_state < PARSER_HEADER_DONE) {
-			connection_read_enable(http_client->connection, http_client_read_header);
-		} else if (http_client->post_current_size < http_client->post_expect_size &&
-				mem_list_size(&http_session->post_list) < PAGE_LIST_MAX_SIZE / 2) {
-			connection_read_enable(http_client->connection, http_client_read_body);
-		}
-	}
-}
-
-static void http_session_fill_body_list(struct http_session_t *http_session)
-{
-	struct http_client_t *http_client = http_session->http_client;
-	struct cache_client_t *cache_client = http_session->cache_client;
-	int64_t body_send_size = -1;
-	int buf_empty = 0;
-	if (http_client) {
-		if (http_client->reply_send_size >= string_strlen(&http_client->reply_header)) {
-			body_send_size = http_client->reply_send_size - string_strlen(&http_client->reply_header);
-			buf_empty = http_session->body_list.hight > (http_client->body_offset + body_send_size)? 0:1;
-			if (!buf_empty) {
-				connection_write_enable(http_client->connection, http_client_write);
-			}
-		}
-	}
-	if (cache_client && !aio_busy(&cache_client->aio)) {
-		cache_client_write_body(http_session);
-	}
-}
-
-static void http_session_free_body_list(struct http_session_t *http_session)
-{
-	struct http_request_t *http_request = &http_session->http_request;
-	struct http_client_t *http_client = http_session->http_client;
-	struct http_server_t *http_server = http_session->http_server;
-	struct http_reply_t *http_reply = NULL;
-	struct cache_client_t *cache_client = http_session->cache_client;
-	int64_t pos = http_session->body_list.hight;
-	if (http_client) {
-		if (http_client->reply_send_size > string_strlen(&http_client->reply_header)) {
-			pos = http_client->reply_send_size - string_strlen(&http_client->reply_header) + http_client->body_offset;
-		} else {
-			pos = http_client->body_offset;
-		}
-	}
-	if (cache_client && pos > cache_client->body_current_offset) {
-		pos = cache_client->body_current_offset;
-	}
-	LOG(LOG_DEBUG, "%s %s pos=%"PRId64"\n", http_session->epoll_thread->name, string_buf(&http_request->url), pos);
-	mem_list_free_to(&http_session->body_list, pos);
-
-	if (http_server && http_server->connection) {
-		http_reply = http_server->parser.data;
-		if (http_reply && http_reply->parse_state < PARSER_HEADER_DONE) {
-			connection_read_enable(http_server->connection, http_server_read_header);
-		} else if (http_server->body_current_size < http_server->body_expect_size &&
-				mem_list_size(&http_session->body_list) < PAGE_LIST_MAX_SIZE / 2) {
-			connection_read_enable(http_server->connection, http_server_read_body);
 		}
 	}
 }
@@ -844,7 +575,7 @@ static void http_client_check_close(struct http_session_t *http_session, int err
 		}
 	} else  {
 		body_send_size = http_client->reply_send_size - string_strlen(&http_client->reply_header);
-		if (http_session->body_list.hight > http_client->body_offset + body_send_size) {
+		if (http_session->body_hight > http_client->body_offset + body_send_size) {
 		} else {
 			http_client_close(http_session, -1);
 		}
@@ -877,6 +608,31 @@ static void http_client_close(struct http_session_t *http_session, int error_cod
 	} else {
 		http_session_close(http_session);
 	}
+}
+
+static void http_session_copy_post(struct http_session_t *http_session, const char *buf, size_t len)
+{
+	size_t ncopy = 0;
+	struct buffer_t *buffer = NULL;
+	buffer = buffer_list_tail(&http_session->post_list);
+	if (buffer == NULL || buffer_full(buffer)) {
+		buffer = buffer_alloc(PAGE_SIZE);
+		buffer_list_push(&http_session->post_list, buffer);
+	}
+	while (len > 0) {
+		if (buffer_full(buffer)) {
+			buffer = buffer_alloc(PAGE_SIZE);
+			buffer_list_push(&http_session->post_list, buffer);
+		}
+		ncopy = buffer->size - buffer->len;
+		if (ncopy > len) {
+			ncopy = len;
+		}
+		memcpy(buffer->buf + buffer->len, buf, ncopy);
+		buf += ncopy;
+		len -= ncopy;
+	}
+	http_session->post_hight += len;
 }
 
 static void http_client_read_header(struct connection_t *connection)
@@ -946,6 +702,7 @@ static void http_client_read_header(struct connection_t *connection)
 	http_session_lookup_cache(http_session);
 }
 
+
 static void http_client_read_body(struct connection_t *connection)
 {
 	struct http_session_t *http_session = connection->arg;
@@ -979,7 +736,7 @@ static void http_client_read_body(struct connection_t *connection)
 		buf_full = mem_list_size(&http_session->post_list) >= PAGE_LIST_MAX_SIZE? 1:0;
 	} while (loop < MAX_LOOP && !buf_full);
 	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
-	http_session_fill_post_list(http_session);
+	http_session_fill_post(http_session);
 	if (error) {
 		http_client_close(http_session, -1);
 		return;
@@ -2008,13 +1765,15 @@ static void cache_aio_open_done(struct aio_t *aio)
 	}
 }
 
-static void cache_aio_close(struct cache_t *cache)
-{
-}
+/*
+   static void cache_aio_close(struct cache_t *cache)
+   {
+   }
 
-static void cache_aio_close_done(struct aio_t *aio)
-{
-}
+   static void cache_aio_close_done(struct aio_t *aio)
+   {
+   }
+ */
 
 static struct cache_t* cache_alloc(const char *key)
 {
@@ -2117,3 +1876,4 @@ static int cache_table_erase(struct cache_t *cache)
 	cache_table->count--;
 	return 0;
 }
+
