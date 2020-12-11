@@ -872,7 +872,7 @@ static void http_client_write_header(struct connection_t *connection)
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_client_t *http_client = http_session->http_client;
 	char *buf = NULL;
-	ssize_t len = 0;
+	size_t len = 0;
 	ssize_t nwrite = 0;
 	assert(connection == http_client->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
@@ -905,7 +905,7 @@ static void http_client_write_body(struct connection_t *connection)
 	struct http_client_t *http_client = http_session->http_client;
 	struct buffer_t *buffer = NULL;
 	char *buf = NULL;
-	ssize_t len = 0;
+	size_t len = 0;
 	ssize_t nwrite = 0;
 	int loop = 0;
 	int error = 0;
@@ -1178,6 +1178,34 @@ static void http_server_write_resume(struct http_session_t *http_session)
 
 static void http_server_write_header(struct connection_t *connection)
 {
+	struct http_session_t *http_session = connection->arg;
+	struct http_request_t *http_request = &http_session->http_request;
+	struct http_server_t *http_server = http_session->http_server;
+	char *buf = NULL;
+	ssize_t len = 0;
+	ssize_t nwrite = 0;
+	assert(connection == http_server->connection);
+	assert(connection->epoll_thread == http_session->epoll_thread);
+	buf = string_buf(&http_server->request_header) + http_server->request_header_send_size;
+	len = string_strlen(&http_server->request_header) - http_server->request_header_send_size;
+	nwrite = http_send(connection->fd, buf, len, 0);
+	if (nwrite <= 0) {
+		if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			LOG(LOG_DEBUG, "%s %s fd=%d wait for send\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
+			connection_write_done(connection);
+		} else {
+			LOG(LOG_DEBUG, "%s %s fd=%d send=%d error:%s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite, strerror(errno));
+			http_server_close(http_session, -1);
+			return;
+		}
+	}
+	LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
+	http_server->request_header_send_size += nwrite;
+	if (string_strlen(&http_server->request_header) > http_server->request_header_send_size) {
+		connection_write_enable(connection, http_server_write_header);//read write next event loop
+	} else {
+		http_server_write_body(connection);
+	}
 }
 
 static void http_server_write_body(struct connection_t *connection)
@@ -1185,23 +1213,34 @@ static void http_server_write_body(struct connection_t *connection)
 	struct http_session_t *http_session = connection->arg;
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_server_t *http_server = http_session->http_server;
+	struct buffer_t *buffer = NULL;
 	char *buf = NULL;
-	size_t len = 0;
+	ssize_t len = 0;
 	ssize_t nwrite = 0;
-	int64_t body_send_size = -1;
 	int loop = 0;
-	int buf_empty = 0;
 	int error = 0;
+	int64_t post_pos = 0;
 	assert(connection == http_server->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	do {
-		loop++;
-		if (http_server->request_send_size >= string_strlen(&http_server->request_header)) {
-			body_send_size = http_server->request_send_size - string_strlen(&http_server->request_header);
-			len = mem_list_read_buf(&http_session->post_list, &buf, body_send_size);
-		} else {
-			buf = string_buf(&http_server->request_header) + http_server->request_send_size;
-			len= string_strlen(&http_server->request_header) - http_server->request_send_size;
+	while ((buffer = buffer_list_head(&http_session->post_list)) && loop++ < MAX_LOOP) {
+		post_pos = 0 + http_server->post_send_size;
+		if (post_pos >= http_session->post_low + buffer->len) {
+			loop--;
+			if (buffer_full(buffer)) {
+				buffer_list_pop(&http_session->post_list, (void**)&buffer);
+				http_session->post_low += buffer->len;
+				buffer_unref(buffer);
+				continue;
+			} else {
+				buffer = NULL;
+				break;
+			}
+		}
+		nwrite = (ssize_t)(post_pos - http_session->post_low);
+		buf = buffer->buf + nwrite;
+		len = buffer->len - nwrite;
+		if (http_server->post_send_size + len > http_request->content_length) {
+			len = http_request->content_length - http_server->post_send_size;
 		}
 		nwrite = http_send(connection->fd, buf, len, 0);
 		if (nwrite <= 0) {
@@ -1215,25 +1254,24 @@ static void http_server_write_body(struct connection_t *connection)
 			break;
 		}
 		LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
-		http_server->request_send_size += nwrite;
-		if (http_server->request_send_size >= string_strlen(&http_server->request_header)) {
-			body_send_size = http_server->request_send_size - string_strlen(&http_server->request_header);
-			http_session_free_post_list(http_session);
-			buf_empty = http_session->post_list.hight > body_send_size? 0:1;
+		http_server->post_send_size += nwrite;
+		if (buffer_full(buffer) && buf + nwrite == buffer->buf + buffer->len) {
+			buffer_list_pop(&http_session->post_list, (void**)&buffer);
+			http_session->post_low += buffer->len;
+			buffer_unref(buffer);
 		}
-	} while (loop < MAX_LOOP && !buf_empty);
+	}
 	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
 	if (error) {
 		http_server_close(http_session, 503);
 		return;
 	}
-	//body_send_size == -1 means header not send done
-	if (body_send_size < http_request->content_length) {
-		if (buf_empty) {
+	if (http_server->post_send_size < http_request->content_length) {
+		if (buffer) {
+			connection_write_enable(connection, http_server_write_body);//read write next event loop
+		} else {
 			LOG(LOG_DEBUG, "%s %s fd=%d buffer empty\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
 			connection_write_disable(connection);
-		} else {
-			connection_write_enable(connection, http_server_write);//read write next event loop
 		}
 	} else {
 		LOG(LOG_DEBUG, "%s %s fd=%d request write done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
