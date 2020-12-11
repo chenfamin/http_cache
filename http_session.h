@@ -68,8 +68,9 @@ struct http_client_t {
 	int64_t post_expect_size;
 	int keep_alive;
 	struct string_t reply_header; 
-	int64_t reply_send_size; 
+	int64_t reply_header_send_size; 
 	int64_t body_offset;
+	int64_t body_send_size;
 	int64_t body_expect_size;
 	struct continuation_t continuation;
 };
@@ -78,7 +79,8 @@ struct http_server_t {
 	struct connection_t *connection;
 	struct http_range_t *range;
 	struct string_t request_header;
-	int64_t request_send_size;
+	int64_t request_header_send_size;
+	int64_t post_send_size;
 	http_parser parser;
 	int chunked;
 	struct http_chunked_t http_chunked;
