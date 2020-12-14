@@ -77,10 +77,13 @@ struct http_client_t {
 
 struct http_server_t {
 	struct connection_t *connection;
+	int connected;
 	struct http_range_t *range;
 	struct string_t request_header;
 	int64_t request_header_send_size;
+	int64_t post_offset;
 	int64_t post_send_size;
+	int64_t post_expect_size;
 	http_parser parser;
 	int chunked;
 	struct http_chunked_t http_chunked;
