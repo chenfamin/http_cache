@@ -20,9 +20,12 @@ struct buffer_node_t {
 	void *buffer;
 };
 
+struct buffer_node_pool_t {
+	struct list_head_t list;
+};
+
 struct buffer_list_t {
-	struct list_head_t use_list;
-	struct list_head_t free_list;
+	struct list_head_t list;
 };
 
 struct buffer_t* buffer_alloc(size_t size);
@@ -31,13 +34,11 @@ void buffer_unref(struct buffer_t *buffer);
 int buffer_full(struct buffer_t *buffer);
 int buffer_empty(struct buffer_t *buffer);
 
-void buffer_list_init(struct buffer_list_t *buffer_list, size_t size);
-int buffer_list_empty(struct buffer_list_t *buffer_list);
-int buffer_list_full(struct buffer_list_t *buffer_list);
-void* buffer_list_head(struct buffer_list_t *buffer_list);
-void* buffer_list_tail(struct buffer_list_t *buffer_list);
-void buffer_list_push(struct buffer_list_t *buffer_list, void *buffer);
-void buffer_list_pop(struct buffer_list_t *buffer_list, void **buffer);
-void buffer_list_clean(struct buffer_list_t *buffer_list);
-
+void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t alloc_size);
+int buffer_node_pool_empty(struct buffer_node_pool_t *buffer_node_pool);
+struct buffer_node_t* buffer_node_pool_head(struct buffer_node_pool_t *buffer_node_pool);
+struct buffer_node_t* buffer_node_pool_tail(struct buffer_node_pool_t *buffer_node_pool);
+void buffer_node_pool_push(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t *buffer_node);
+void buffer_node_pool_pop(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t **buffer_node);
+void buffer_node_pool_clean(struct buffer_node_pool_t *buffer_node_pool);
 #endif

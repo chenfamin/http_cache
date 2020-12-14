@@ -64,7 +64,7 @@ struct cache_client_t {
 struct http_client_t {
 	struct connection_t *connection;
 	http_parser parser;
-	int64_t post_current_size;
+	int64_t post_offset;
 	int64_t post_expect_size;
 	int keep_alive;
 	struct string_t reply_header; 
@@ -88,7 +88,6 @@ struct http_server_t {
 	uint16_t port;
 	int keep_alive;
 	int64_t body_offset;
-	int64_t body_current_size;
 	int64_t body_expect_size;
 	struct continuation_t continuation;
 };
@@ -98,14 +97,16 @@ struct http_session_t {
 	struct http_request_t http_request;
 	int64_t post_low;
 	int64_t post_hight;
-	struct buffer_list_t post_list;
+	struct buffer_node_pool_t post_free_pool;
+	struct buffer_node_pool_t post_data_pool;
 	struct http_client_t *http_client;
 	struct cache_client_t *cache_client;
 	struct http_server_t *http_server;
 	int abort;
 	int64_t body_low;
 	int64_t body_hight;
-	struct buffer_list_t body_list;
+	struct buffer_node_pool_t body_free_pool;
+	struct buffer_node_pool_t body_data_pool;
 	struct epoll_thread_t *epoll_thread;
 };
 

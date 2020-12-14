@@ -36,75 +36,65 @@ int buffer_empty(struct buffer_t *buffer)
 	return buffer->len == 0;
 }
 
-
-void buffer_list_init(struct buffer_list_t *buffer_list, size_t size)
+void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t alloc_size)
 {
 	size_t i = 0;
 	struct buffer_node_t *buffer_node = NULL;
-	for (i = 0; i < size; i++) {
+	INIT_LIST_HEAD(&buffer_node_pool->list);
+	for (i = 0; i < alloc_size; i++) {
 		buffer_node = http_malloc(sizeof(struct buffer_node_t));
-		buffer_node->buffer = NULL;
-		list_add_tail(&buffer_node->node, &buffer_list->free_list);
+		list_add_tail(&buffer_node->node, &buffer_node_pool->list);
 	}
 }
 
-int buffer_list_empty(struct buffer_list_t *buffer_list)
+int buffer_node_pool_empty(struct buffer_node_pool_t *buffer_node_pool)
 {
-	return list_empty(&buffer_list->use_list);
+	if (list_empty(&buffer_node_pool->list)) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
-int buffer_list_full(struct buffer_list_t *buffer_list)
+struct buffer_node_t* buffer_node_pool_head(struct buffer_node_pool_t *buffer_node_pool)
 {
-	return list_empty(&buffer_list->free_list);
-}
-
-void* buffer_list_head(struct buffer_list_t *buffer_list)
-{
-	struct buffer_node_t *buffer_node = NULL;
-	if (list_empty(&buffer_list->use_list)) {
+	if (list_empty(&buffer_node_pool->list)) {
 		return NULL;
+	} else {
+		return d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
 	}
-	buffer_node = d_list_head(&buffer_list->use_list, struct buffer_node_t, node);
-	return buffer_node->buffer;
 }
 
-void* buffer_list_tail(struct buffer_list_t *buffer_list)
+struct buffer_node_t* buffer_node_pool_tail(struct buffer_node_pool_t *buffer_node_pool)
 {
-	struct buffer_node_t *buffer_node = NULL;
-	if (list_empty(&buffer_list->use_list)) {
+	if (list_empty(&buffer_node_pool->list)) {
 		return NULL;
+	} else {
+		return d_list_tail(&buffer_node_pool->list, struct buffer_node_t, node);
 	}
-	buffer_node = d_list_head(&buffer_list->use_list, struct buffer_node_t, node);
-	return buffer_node->buffer;
 }
 
-void buffer_list_push(struct buffer_list_t *buffer_list, void *buffer)
+void buffer_node_pool_push(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t *buffer_node)
 {
-	struct buffer_node_t *buffer_node = NULL;
-	assert(!list_empty(&buffer_list->free_list));
-	buffer_node = d_list_head(&buffer_list->free_list, struct buffer_node_t, node);
-	list_del(&buffer_node->node);
-	buffer_node->buffer = buffer;
-	list_add_tail(&buffer_node->node, &buffer_list->use_list);
+	list_add_tail(&buffer_node->node, &buffer_node_pool->list);
 }
 
-void buffer_list_pop(struct buffer_list_t *buffer_list, void **buffer)
+void buffer_node_pool_pop(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t **buffer_node)
 {
-	struct buffer_node_t *buffer_node = NULL;
-	assert(!list_empty(&buffer_list->use_list));
-	buffer_node = d_list_head(&buffer_list->use_list, struct buffer_node_t, node);
-	list_del(&buffer_node->node);
-	*buffer = buffer_node->buffer;
-	buffer_node->buffer = NULL;
-	list_add_tail(&buffer_node->node, &buffer_list->free_list);
+	assert(!list_empty(&buffer_node_pool->list));
+	if (list_empty(&buffer_node_pool->list)) {
+		*buffer_node = NULL;
+	} else {
+		*buffer_node = d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
+		list_del(&(*buffer_node)->node);
+	}
 }
 
-void buffer_list_clean(struct buffer_list_t *buffer_list)
+void buffer_node_pool_clean(struct buffer_node_pool_t *buffer_node_pool)
 {
 	struct buffer_node_t *buffer_node = NULL;
-	assert(list_empty(&buffer_list->use_list));
-	while (!list_empty(&buffer_list->free_list)) {
-		buffer_node = d_list_head(&buffer_list->free_list, struct buffer_node_t, node);
+	while (!list_empty(&buffer_node_pool->list)) {
+		buffer_node = d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
 		list_del(&buffer_node->node);
 		http_free(buffer_node);
 	}
