@@ -23,7 +23,7 @@ void log_printf(int level, const char *file, int line, const char *function, con
 	int n2;
 	current = time(NULL);
 	localtime_r(&current, &tm);
-	n1 = snprintf(buf, sizeof(buf), "%d/%02d/%02d %02d:%02d:%02d %s|%d|%s: ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, file, line, function);
+	n1 = snprintf(buf, sizeof(buf), "%d/%02d/%02d %02d:%02d:%02d %s:%d|%s: ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, file, line, function);
 	va_start(argptr, fmt);
 	n2 = vsnprintf(buf + n1, sizeof(buf) - n1, fmt, argptr);
 	va_end(argptr);
