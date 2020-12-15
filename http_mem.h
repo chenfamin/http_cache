@@ -21,6 +21,7 @@ struct buffer_node_t {
 };
 
 struct buffer_node_pool_t {
+	size_t size;
 	struct list_head_t list;
 };
 
@@ -34,7 +35,8 @@ void buffer_unref(struct buffer_t *buffer);
 int buffer_full(struct buffer_t *buffer);
 int buffer_empty(struct buffer_t *buffer);
 
-void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t alloc_size);
+void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t size);
+size_t buffer_node_pool_size(struct buffer_node_pool_t *buffer_node_pool);
 int buffer_node_pool_empty(struct buffer_node_pool_t *buffer_node_pool);
 struct buffer_node_t* buffer_node_pool_head(struct buffer_node_pool_t *buffer_node_pool);
 struct buffer_node_t* buffer_node_pool_tail(struct buffer_node_pool_t *buffer_node_pool);

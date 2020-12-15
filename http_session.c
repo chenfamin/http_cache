@@ -523,14 +523,13 @@ static void http_session_close(struct http_session_t *http_session)
 static void http_client_create(struct http_session_t *http_session, struct connection_t *connection)
 {
 	struct http_client_t *http_client = NULL;
-	http_client = http_malloc(sizeof(struct http_client_t));
+	http_session->http_client = http_client = http_malloc(sizeof(struct http_client_t));
 	memset(http_client, 0, sizeof(struct http_client_t));
 	http_client->connection = connection;
 	http_parser_init(&http_client->parser, HTTP_REQUEST);
 	http_client->parser.data = &http_session->http_request;
 	string_init_size(&http_client->reply_header, 1024);
 
-	http_session->http_client = http_client;
 	connection->arg = http_session;
 	connection_read_enable(connection, http_client_header_read);
 }
@@ -1048,9 +1047,8 @@ static void http_server_create(struct http_session_t *http_session, struct http_
 		}
 		return;
 	}
-	http_server = http_malloc(sizeof(struct http_server_t));
+	http_session->http_server = http_server = http_malloc(sizeof(struct http_server_t));
 	memset(http_server, 0, sizeof(struct http_server_t));
-	http_session->http_server = http_server;
 	if (http_request->content_length >= 0) {
 		http_server->post_expect_size = http_request->content_length;
 	}
@@ -1406,7 +1404,8 @@ static void http_server_read_resume(struct http_session_t *http_session)
 		if (http_reply && http_reply->parse_state < PARSER_HEADER_DONE) {
 			connection_read_enable(http_server->connection, http_server_header_read);
 		} else if (http_session->body_hight < http_server->body_offset + http_server->body_expect_size) {
-			if (http_session_body_alloc(http_session) != NULL) {
+			//if (http_session_body_alloc(http_session) != NULL) {
+			if (buffer_node_pool_size(&http_session->body_free_pool) >= buffer_node_pool_size(&http_session->body_data_pool)) {
 				connection_read_enable(http_server->connection, http_server_body_read);
 			}
 		}
@@ -1890,9 +1889,8 @@ char* cache_aio_path(char *path, size_t size, int64_t file_number)
 static void cache_aio_open(struct cache_t *cache)
 {
 	struct cache_aio_t *cache_aio = NULL;
-	cache_aio = http_malloc(sizeof(struct cache_aio_t));
+	cache->cache_aio = cache_aio = http_malloc(sizeof(struct cache_aio_t));
 	memset(cache_aio, 0, sizeof(struct cache_aio_t));
-	cache->cache_aio = cache_aio;
 	INIT_LIST_HEAD(&cache_aio->delay_list);
 	cache_aio->file_number = cache->file_number;
 	cache_aio->aio.exec = cache_aio_open_exec;
