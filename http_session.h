@@ -46,6 +46,7 @@ struct cache_t {
 	struct epoll_thread_t *epoll_thread;
 	int lock;
 
+	char *url;
 	struct http_reply_t *http_reply;
 	int header_size;
 	int64_t file_number;
@@ -53,6 +54,8 @@ struct cache_t {
 };
 
 struct cache_client_t {
+	void *http_session;
+	struct epoll_thread_t *epoll_thread;
 	struct cache_t *cache;
 	int64_t body_current_offset;
 	int64_t body_low;
