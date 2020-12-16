@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <errno.h>
 #include <strings.h>
 #include <ctype.h>
@@ -32,11 +31,6 @@
 
 #include "list.h"
 #include "rbtree.h"
-
-#define http_malloc malloc
-#define http_realloc realloc
-//#define http_strdup strdup
-#define http_free free
 
 #define MIN(a,b) (((a)<(b)) ? (a) : (b))
 #define MAX(a,b) (((a)>(b)) ? (a) : (b))
@@ -65,12 +59,6 @@ struct continuation_t {
 	int wait;
 	int type;
 	void *buf;
-};
-
-struct string_t {
-	size_t size;
-	size_t len;
-	char *buf;
 };
 
 struct epoll_thread_t {
@@ -105,17 +93,8 @@ struct aio_thread_t {
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
 
-void string_init_size(struct string_t *string, size_t size);
-void string_init_str(struct string_t *string, const char *s);
-void string_clean(struct string_t *string);
-void string_strcat(struct string_t *string, const char *s);
-void string_strncat(struct string_t *string, const char *s, size_t len);
-void string_strcat_printf(struct string_t *string, const char *format, ...);
-size_t string_strlen(const struct string_t *string);
-char* string_buf(const struct string_t *string);
 
 int socket_non_block(int fd);
-char *http_strdup(const char *s);
 void strlow(uint8_t *dst, uint8_t *src, size_t n);
 const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
 

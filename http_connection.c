@@ -1,4 +1,5 @@
 #include "http.h"
+#include "http_mem.h"
 #include "http_log.h"
 #include "http_connection.h"
 int connection_epoll_add(struct connection_t *connection, uint32_t event)

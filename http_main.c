@@ -243,6 +243,7 @@ void* aio_thread_loop(void *arg)
 int main()
 {
 	int i = 0;
+	mem_pools_init();
 	log_file_open();
 	if (signal(SIGINT, sig_int) == SIG_ERR) {
 		LOG(LOG_ERROR, "regist SIGINT error\n");
@@ -305,6 +306,10 @@ int main()
 	aio_list_free();
 	dns_cache_table_free();
 	cache_table_free();
+	char buf[4096];
+	mem_pools_report(buf, sizeof(buf));
+	LOG(LOG_INFO, "mem_pools_report:\n%s\n", buf);
 	log_file_close();
+	mem_pools_destroy();
 	return 0;
 }

@@ -1,8 +1,8 @@
 TARGET = http
 
-CFLAGS += -g -Wall
+CFLAGS += -Wall -g -O3
 LDFLAGS += -lpthread
-#LDFLAGS += -static
+LDFLAGS += -static
 
 OBJECTS = http_parser.c http_mem.c rbtree.c http_log.c http_aio.c http_connection.c http_header.c http_session.c http_dns.c http_main.c
 
@@ -16,3 +16,4 @@ test:
 clean:
 	rm -f $(TARGET) *.o
 	rm -f debug.log
+	rm -f gmon.out

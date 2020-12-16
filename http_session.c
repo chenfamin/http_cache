@@ -6,7 +6,7 @@
 #include "http_header.h"
 #include "http_session.h"
 
-static struct cache_table_t *cache_table = NULL;
+static struct cache_table_t cache_table;
 
 static int socket_listen(const char *host, uint16_t port, int family);
 static int request_on_message_begin(http_parser *hp);
@@ -117,92 +117,6 @@ ssize_t http_recv(int s, void *buf, size_t len, int flags)
 ssize_t http_send(int s, const void *buf, size_t len, int flags)
 {
 	return send(s, buf, len, flags);
-}
-
-void string_init_size(struct string_t *string, size_t size)
-{
-	assert(size > 0);
-	string->buf = http_malloc(size);
-	string->size = size;
-	string->len = 0;
-	string->buf[0] = '\0';
-}
-
-void string_init_str(struct string_t *string, const char *s)
-{
-	size_t len = strlen(s);
-	string_init_size(string, len + 1);
-	string_strncat(string, s, len);
-}
-
-void string_clean(struct string_t *string)
-{
-	http_free(string->buf);
-}
-
-void string_strcat(struct string_t *string, const char *s)
-{
-	string_strncat(string, s, strlen(s));
-}
-
-void string_strncat(struct string_t *string, const char *s, size_t len)
-{
-	if (string->size - string->len < len + 1) {
-		size_t size2 = string->size;
-		while (size2 < string->len + len + 1) size2 <<= 1;
-		string->buf = http_realloc(string->buf, size2);
-		string->size = size2;
-	}
-	memcpy(string->buf + string->len, s, len);
-	string->len += len;
-	string->buf[string->len] = '\0';
-}
-
-void string_strcat_printf(struct string_t *string, const char *format, ...)
-{
-	va_list ap;
-	int n = 0;
-	size_t size2 = string->size;
-	while (1) {
-		va_start(ap, format);
-		n = vsnprintf(string->buf + string->len, string->size - string->len, format, ap);
-		va_end(ap);
-		if (n > -1 && n < string->size - string->len) {
-			string->len += n;
-			return;
-		}
-		if (n > -1) {
-			while (size2 < string->len + n + 1) size2 <<= 1; 
-		} else {
-			size2 <<= 1;
-		}
-		string->buf = http_realloc(string->buf, size2);
-		string->size = size2;
-	}
-}
-
-size_t string_strlen(const struct string_t *string)
-{
-	return string->len;
-}
-
-char* string_buf(const struct string_t *string)
-{
-	return string->buf;
-}
-
-char *http_strdup(const char *s)
-{
-	char *str = NULL;
-	int len = 0;
-	if (s) {
-		len = strlen(s);
-		str = http_malloc(len + 1);
-		memcpy(str, s, len);
-		str[len] = 0;
-
-	}
-	return str;
 }
 
 void strlow(uint8_t *dst, uint8_t *src, size_t n)
@@ -503,11 +417,11 @@ static void http_session_close(struct http_session_t *http_session)
 		}
 		http_session->cache_client = NULL;
 	}
-	while (!buffer_node_pool_empty(&http_session->post_data_pool)) {
+	while (buffer_node_pool_size(&http_session->post_data_pool)) {
 		http_session_post_free(http_session);
 	}
 	buffer_node_pool_clean(&http_session->post_free_pool);
-	while (!buffer_node_pool_empty(&http_session->body_data_pool)) {
+	while (buffer_node_pool_size(&http_session->body_data_pool)) {
 		http_session_body_free(http_session);
 	}
 	buffer_node_pool_clean(&http_session->body_free_pool);
@@ -589,7 +503,7 @@ static struct buffer_t* http_session_post_alloc(struct http_session_t *http_sess
 			return buffer;
 		}
 	}
-	if (buffer_node_pool_empty(&http_session->post_free_pool)) {
+	if (buffer_node_pool_size(&http_session->post_free_pool) == 0) {
 		return NULL;
 	} else {
 		buffer_node_pool_pop(&http_session->post_free_pool, &buffer_node);
@@ -1327,8 +1241,8 @@ static struct buffer_t* http_session_body_alloc_head(struct http_session_t *http
 {
 	struct buffer_node_t *buffer_node = NULL;
 	struct buffer_t *buffer = NULL;
-	assert(buffer_node_pool_empty(&http_session->body_data_pool));
-	assert(!buffer_node_pool_empty(&http_session->body_free_pool));
+	assert(buffer_node_pool_size(&http_session->body_data_pool) == 0);
+	assert(buffer_node_pool_size(&http_session->body_free_pool) > 0);
 	buffer_node_pool_pop(&http_session->body_free_pool, &buffer_node);
 	buffer = buffer_alloc(PAGE_SIZE - http_session->body_low % PAGE_SIZE);
 	buffer_node->buffer = buffer;
@@ -1347,7 +1261,7 @@ static struct buffer_t* http_session_body_alloc(struct http_session_t *http_sess
 			return buffer;
 		}
 	}
-	if (buffer_node_pool_empty(&http_session->body_free_pool)) {
+	if (buffer_node_pool_size(&http_session->body_free_pool) == 0) {
 		return NULL;
 	} else {
 		buffer_node_pool_pop(&http_session->body_free_pool, &buffer_node);
@@ -1995,39 +1909,37 @@ static void cache_free(struct cache_t *cache)
 
 void cache_table_create()
 {
-	cache_table = http_malloc(sizeof(struct cache_table_t));
-	memset(cache_table, 0, sizeof(struct cache_table_t));
-	pthread_mutex_init(&cache_table->mutex, NULL);
-	cache_table->rb_root = RB_ROOT;
-	INIT_LIST_HEAD(&cache_table->list);
+	memset(&cache_table, 0, sizeof(struct cache_table_t));
+	pthread_mutex_init(&cache_table.mutex, NULL);
+	cache_table.rb_root = RB_ROOT;
+	INIT_LIST_HEAD(&cache_table.list);
 }
 
 void cache_table_free()
 {
 	struct cache_t *cache = NULL;
 	struct rb_node *node = NULL;
-	while ((node = rb_first(&cache_table->rb_root))) {
+	while ((node = rb_first(&cache_table.rb_root))) {
 		cache = rb_entry(node, struct cache_t, rb_node);
 		cache_table_erase(cache);
 		cache_free(cache);
 	}
-	http_free(cache_table);
-	cache_table = NULL;
+	memset(&cache_table, 0, sizeof(struct cache_table_t));
 }
 
 static int cache_table_lock()
 {
-	return pthread_mutex_lock(&cache_table->mutex);
+	return pthread_mutex_lock(&cache_table.mutex);
 }
 
 static int cache_table_unlock()
 {
-	return pthread_mutex_unlock(&cache_table->mutex);
+	return pthread_mutex_unlock(&cache_table.mutex);
 }
 
 static struct cache_t* cache_table_lookup(const void *key)
 {
-	struct rb_node *node = cache_table->rb_root.rb_node;
+	struct rb_node *node = cache_table.rb_root.rb_node;
 	struct cache_t *cache = NULL;
 	int cmp = 0;
 	while (node)
@@ -2046,7 +1958,7 @@ static struct cache_t* cache_table_lookup(const void *key)
 
 static int cache_table_insert(struct cache_t *cache)
 {
-	struct rb_node **p = &cache_table->rb_root.rb_node;
+	struct rb_node **p = &cache_table.rb_root.rb_node;
 	struct rb_node *parent = NULL;
 	struct cache_t *cache_tmp = NULL;
 	int cmp;
@@ -2063,15 +1975,15 @@ static int cache_table_insert(struct cache_t *cache)
 			return -1; 
 	}   
 	rb_link_node(&cache->rb_node, parent, p); 
-	rb_insert_color(&cache->rb_node, &cache_table->rb_root);
-	cache_table->count--;
+	rb_insert_color(&cache->rb_node, &cache_table.rb_root);
+	cache_table.count--;
 	return 0;
 }
 
 static int cache_table_erase(struct cache_t *cache)
 {
-	rb_erase(&cache->rb_node, &cache_table->rb_root);
-	cache_table->count--;
+	rb_erase(&cache->rb_node, &cache_table.rb_root);
+	cache_table.count--;
 	return 0;
 }
 
