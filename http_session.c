@@ -1274,7 +1274,7 @@ static struct buffer_t* http_session_body_alloc(struct http_session_t *http_sess
 
 static void http_session_body_free(struct http_session_t *http_session)
 {
-	struct http_request_t *http_request = &http_session->http_request;
+	//struct http_request_t *http_request = &http_session->http_request;
 	struct buffer_node_t *buffer_node = NULL;
 	struct buffer_t *buffer = NULL;
 	buffer_node_pool_pop(&http_session->body_data_pool, &buffer_node);
@@ -1282,7 +1282,7 @@ static void http_session_body_free(struct http_session_t *http_session)
 	buffer_node->buffer = NULL;
 	http_session->body_low += buffer->len;
 	buffer_node_pool_push(&http_session->body_free_pool, buffer_node);
-	LOG(LOG_DEBUG, "%s %s size=%d len=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), buffer->size, buffer->len);
+	//LOG(LOG_DEBUG, "%s %s size=%d len=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), buffer->size, buffer->len);
 	buffer_unref(buffer);
 }
 

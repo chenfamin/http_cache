@@ -1,6 +1,6 @@
 TARGET = http
 
-CFLAGS += -Wall -g -O3
+CFLAGS += -Wall -g
 LDFLAGS += -lpthread
 LDFLAGS += -static
 
