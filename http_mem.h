@@ -3,7 +3,7 @@
 
 #include "list.h"
 
-#if 0
+#if MEM_POOL
 
 #define http_malloc malloc
 #define http_realloc realloc

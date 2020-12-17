@@ -306,9 +306,11 @@ int main()
 	aio_list_free();
 	dns_cache_table_free();
 	cache_table_free();
+#if MEM_POOL
 	char buf[4096];
 	mem_pools_report(buf, sizeof(buf));
 	LOG(LOG_INFO, "mem_pools_report:\n%s\n", buf);
+#endif
 	log_file_close();
 	mem_pools_destroy();
 	return 0;

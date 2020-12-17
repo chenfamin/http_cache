@@ -28,7 +28,6 @@
 
 #include <sys/epoll.h>
 
-
 #include "list.h"
 #include "rbtree.h"
 
@@ -92,7 +91,6 @@ struct aio_thread_t {
 
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
-
 
 int socket_non_block(int fd);
 void strlow(uint8_t *dst, uint8_t *src, size_t n);

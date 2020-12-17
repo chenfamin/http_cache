@@ -1,4 +1,4 @@
 #!/bin/sh
-make "CFLAGS=-pg -g -O3"
-./http
+make GPROF_CFLAGS=-pg
+time ./http
 gprof ./http gmon.out -p

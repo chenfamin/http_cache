@@ -72,7 +72,7 @@ static void cache_client_header_read(struct cache_client_t *cache_client);
 static void cache_client_header_write(struct cache_client_t *cache_client);
 static void cache_client_header_write_done(struct aio_t *aio);
 static void cache_client_body_write(struct cache_client_t *cache_client);
-static void cache_client_body_write_done(struct aio_t *aio);
+//static void cache_client_body_write_done(struct aio_t *aio);
 static void cache_client_aio_summit(struct cache_client_t *cache_client);
 
 static void cache_aio_open(struct cache_t *cache);
@@ -1756,6 +1756,7 @@ static void cache_client_body_write(struct cache_client_t *cache_client)
 #endif
 }
 
+#if 0
 static void cache_client_body_write_done(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
@@ -1770,6 +1771,7 @@ static void cache_client_body_write_done(struct aio_t *aio)
 		cache_client_close(cache_client, 1);
 	}
 }
+#endif
 
 static void cache_client_aio_summit(struct cache_client_t *cache_client)
 {
