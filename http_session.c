@@ -559,7 +559,7 @@ static void http_client_read_resume(struct http_session_t *http_session)
 		if (http_request->parse_state < PARSER_HEADER_DONE) {
 			connection_read_enable(http_client->connection, http_client_header_read);
 		} else if (http_session->post_hight < http_client->post_offset + http_client->post_expect_size) {
-			if (http_session_post_alloc(http_session) != NULL) {
+			if (buffer_node_pool_size(&http_session->post_free_pool) >= buffer_node_pool_size(&http_session->post_data_pool)) {
 				connection_read_enable(http_client->connection, http_client_body_read);
 			}
 		}

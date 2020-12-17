@@ -4,17 +4,13 @@
 #include "list.h"
 
 #if MEM_POOL
-
-#define http_malloc malloc
-#define http_realloc realloc
-#define http_free free
-
-#else 
-
 #define http_malloc mem_malloc
 #define http_realloc mem_realloc
 #define http_free mem_free
-
+#else 
+#define http_malloc malloc
+#define http_realloc realloc
+#define http_free free
 #endif
 
 struct string_t {
