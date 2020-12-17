@@ -646,9 +646,10 @@ static void http_client_body_read(struct connection_t *connection)
 	int error = 0;
 	assert(connection == http_client->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer = http_session_post_alloc(http_session)) && loop++ < MAX_LOOP) {
+	while ((buffer = http_session_post_alloc(http_session)) && loop < MAX_LOOP) {
 		buf = buffer->buf + buffer->len;
 		len = buffer->size - buffer->len;
+		loop++;
 		nread = http_recv(connection->fd, buf, len, 0);
 		if (nread <= 0) {
 			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -886,11 +887,10 @@ static void http_client_body_write(struct connection_t *connection)
 	int64_t body_pos = 0;
 	assert(connection == http_client->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer_node = buffer_node_pool_head(&http_session->body_data_pool)) && loop++ < MAX_LOOP) {
+	while ((buffer_node = buffer_node_pool_head(&http_session->body_data_pool)) && loop < MAX_LOOP) {
 		buffer = buffer_node->buffer;
 		body_pos = http_client->body_offset + http_client->body_send_size;
 		if (body_pos >= http_session->body_low + buffer->len) {
-			loop--;
 			if (buffer_full(buffer)) {
 				http_session_body_free(http_session);
 				continue;
@@ -905,6 +905,7 @@ static void http_client_body_write(struct connection_t *connection)
 		if (http_client->body_send_size + len > http_client->body_expect_size) {
 			len = http_client->body_expect_size - http_client->body_send_size;
 		}
+		loop++;
 		nwrite = http_send(connection->fd, buf, len, 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -1182,11 +1183,10 @@ static void http_server_body_write(struct connection_t *connection)
 	int64_t post_pos = 0;
 	assert(connection == http_server->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer_node = buffer_node_pool_head(&http_session->post_data_pool)) && loop++ < MAX_LOOP) {
+	while ((buffer_node = buffer_node_pool_head(&http_session->post_data_pool)) && loop < MAX_LOOP) {
 		buffer = buffer_node->buffer;
 		post_pos = 0 + http_server->post_send_size;
 		if (post_pos >= http_session->post_low + buffer->len) {
-			loop--;
 			if (buffer_full(buffer)) {
 				http_session_post_free(http_session);
 				continue;
@@ -1201,6 +1201,7 @@ static void http_server_body_write(struct connection_t *connection)
 		if (http_server->post_send_size + len > http_server->post_expect_size) {
 			len = http_server->post_expect_size - http_server->post_send_size;
 		}
+		loop++;
 		nwrite = http_send(connection->fd, buf, len, 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -1396,9 +1397,10 @@ static void http_server_body_read(struct connection_t *connection)
 	int error = 0;
 	assert(connection == http_server->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer = http_session_body_alloc(http_session)) && loop++ < MAX_LOOP) {
+	while ((buffer = http_session_body_alloc(http_session)) && loop < MAX_LOOP) {
 		buf = buffer->buf + buffer->len;
 		len = buffer->size - buffer->len;
+		loop++;
 		nread = http_recv(connection->fd, buf, len, 0);
 		if (nread <= 0) {
 			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
