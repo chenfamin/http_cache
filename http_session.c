@@ -391,7 +391,7 @@ void http_session_abort(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
 	http_session->abort = 1;
-	LOG(LOG_DEBUG, "%s %s abort\n", http_session->epoll_thread->name, string_buf(&http_request->url));
+	LOG(LOG_INFO, "%s %s abort\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 	if (http_session->http_client) {
 		http_client_close(http_session, -1);
 	} else if (http_session->http_server) {
@@ -410,7 +410,7 @@ static void http_session_close(struct http_session_t *http_session)
 	list_del(&http_session->node);
 	if (cache_client) {
 		if (aio_busy(&cache_client->aio)) {
-			LOG(LOG_DEBUG, "%s %s aio busy\n", http_session->epoll_thread->name, string_buf(&http_request->url));
+			LOG(LOG_INFO, "%s %s aio busy\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 			cache_client->http_session = NULL;
 		} else {
 			cache_client_close(cache_client, 0);
@@ -425,7 +425,7 @@ static void http_session_close(struct http_session_t *http_session)
 		http_session_body_free(http_session);
 	}
 	buffer_node_pool_clean(&http_session->body_free_pool);
-	LOG(LOG_DEBUG, "%s %s\n", http_session->epoll_thread->name, string_buf(&http_request->url));
+	LOG(LOG_INFO, "%s %s\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 	http_header_clean(&http_request->header);
 	if (http_request->range) {
 		http_free(http_request->range);
