@@ -33,11 +33,12 @@ struct cache_table_t {
 	int64_t count;
 };
 
-struct cache_aio_t {
-	struct list_head_t delay_list;
+struct cache_file_t {
+	char *header;
+	int header_size;
 	unsigned char *bitmap;
 	int64_t file_number;// alloc or pass file_number
-	struct aio_t aio;
+	int fd;
 };
 
 struct cache_t {
@@ -48,9 +49,8 @@ struct cache_t {
 
 	char *url;
 	struct http_reply_t *http_reply;
-	int header_size;
 	int64_t file_number;
-	struct cache_aio_t *cache_aio;
+	struct cache_file_t *cache_file;
 };
 
 struct cache_client_t {
@@ -60,8 +60,13 @@ struct cache_client_t {
 	int64_t body_current_offset;
 	int64_t body_low;
 	int64_t body_high;
-	struct buffer_list_t body_list;
+	struct buffer_node_pool_t body_free_pool;
+	struct buffer_node_pool_t body_data_pool;
+	struct buffer_t *buffers[MAX_LOOP];
+	int loop;
+	struct list_head_t writing_list;
 	struct aio_t aio;
+	void (*open_done)(struct cache_client_t*);
 };
 
 struct http_client_t {

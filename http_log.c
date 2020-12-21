@@ -14,7 +14,7 @@ static struct log_file_t log_file;
 
 void log_printf(int level, const char *file, int line, const char *function, const char *fmt, ...)
 {
-	if (level > LOG_INFO) {
+	if (level > LOG_DEBUG) {
 		return;
 	}
 	va_list argptr;
