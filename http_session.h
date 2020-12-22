@@ -107,7 +107,7 @@ struct http_session_t {
 	struct list_head_t node;// for epoll_thread->http_session_list
 	struct http_request_t http_request;
 	int64_t post_low;
-	int64_t post_hight;
+	int64_t post_high;
 	struct buffer_node_pool_t post_free_pool;
 	struct buffer_node_pool_t post_data_pool;
 	struct http_client_t *http_client;
@@ -115,7 +115,7 @@ struct http_session_t {
 	struct http_server_t *http_server;
 	int abort;
 	int64_t body_low;
-	int64_t body_hight;
+	int64_t body_high;
 	struct buffer_node_pool_t body_free_pool;
 	struct buffer_node_pool_t body_data_pool;
 	struct epoll_thread_t *epoll_thread;
