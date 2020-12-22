@@ -107,3 +107,8 @@ void aio_close(struct aio_t *aio)
 	aio->return_ret = close(aio->fd);
 	aio->return_errno = errno;
 }
+
+ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset)
+{
+	return pwrite(fd, buf, count, offset);
+}
