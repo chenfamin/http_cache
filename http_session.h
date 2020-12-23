@@ -73,7 +73,6 @@ struct http_client_t {
 	struct connection_t *connection;
 	http_parser parser;
 	int64_t post_offset;
-	int64_t post_expect_size;
 	int keep_alive;
 	struct string_t reply_header; 
 	int64_t reply_header_send_size; 

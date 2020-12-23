@@ -560,10 +560,8 @@ static void http_client_read_resume(struct http_session_t *http_session)
 	if (http_client) {
 		if (http_request->parse_state < PARSER_HEADER_DONE) {
 			connection_read_enable(http_client->connection, http_client_header_read);
-		} else if (http_client->post_expect_size > 0) {
-			if (buffer_node_pool_size(&http_session->post_free_pool) >= buffer_node_pool_size(&http_session->post_data_pool)) {
-				connection_read_enable(http_client->connection, http_client_body_read);
-			}
+		} else if (buffer_node_pool_size(&http_session->post_free_pool) >= buffer_node_pool_size(&http_session->post_data_pool)) {
+			connection_read_enable(http_client->connection, http_client_body_read);
 		}
 	}
 }
@@ -662,11 +660,9 @@ static void http_client_body_read(struct connection_t *connection)
 			}
 			break;
 		}
-		nread = MIN(nread, http_client->post_expect_size);
 		total_read += nread;
 		buffer->len += nread;
 		http_session->post_high += nread;
-		http_client->post_expect_size -= nread;
 	}
 	LOG(LOG_DEBUG, "%s %s fd=%d total_read=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, total_read);
 	if (total_read > 0) {
@@ -676,7 +672,7 @@ static void http_client_body_read(struct connection_t *connection)
 		http_client_close(http_session, error);
 		return;
 	}
-	if (http_client->post_expect_size > 0) {
+	if (http_session->body_high >= http_request->content_length) {
 		LOG(LOG_DEBUG, "%s %s fd=%d read done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
 	}
 	if (buffer) {
@@ -695,7 +691,7 @@ static int http_client_header_process(struct http_session_t *http_session)
 	str = http_header_find(&http_request->header, "Content-Length");
 	if (str) {
 		http_request->content_length = atol(str);
-		http_client->post_expect_size = http_request->content_length;
+		//http_client->post_expect_size = http_request->content_length;
 	}
 	http_session->post_low = http_session->post_high = 0;
 	if (http_request->http_minor >= 1) {
@@ -907,8 +903,7 @@ static void http_client_body_write(struct connection_t *connection)
 		nwrite = (ssize_t)(body_pos - http_session->body_low);
 		buf = buffer->buf + nwrite;
 		len = buffer->len - nwrite;
-		len = MIN(len, http_client->body_expect_size);
-		nwrite = http_send(connection->fd, buf, len, 0);
+		nwrite = http_send(connection->fd, buf, MIN(len, http_client->body_expect_size), 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
@@ -1132,7 +1127,7 @@ static void http_server_write_resume(struct http_session_t *http_session)
 	if (http_server && http_server->connection && http_server->connected) {
 		if (string_strlen(&http_server->request_header) > http_server->request_header_send_size) {
 			connection_write_enable(http_server->connection, http_server_header_write);
-		} else if (http_session->post_high > http_server->post_offset + http_server->post_send_size) {
+		} else if (http_server->post_expect_size > 0) {
 			connection_write_enable(http_server->connection, http_server_body_write);
 		}
 	}
@@ -1200,8 +1195,7 @@ static void http_server_body_write(struct connection_t *connection)
 		nwrite = (ssize_t)(post_pos - http_session->post_low);
 		buf = buffer->buf + nwrite;
 		len = buffer->len - nwrite;
-		len = MIN(len, http_server->post_expect_size);
-		nwrite = http_send(connection->fd, buf, len, 0);
+		nwrite = http_send(connection->fd, buf, MIN(len, http_server->post_expect_size), 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
@@ -1406,19 +1400,17 @@ static void http_server_body_read(struct connection_t *connection)
 	while ((buffer = http_session_body_alloc(http_session)) && http_server->body_expect_size > 0 && total_read < MAX_READ) {
 		buf = buffer->buf + buffer->len;
 		len = buffer->size - buffer->len;
-		nread = http_recv(connection->fd, buf, len, 0);
+		nread = http_recv(connection->fd, buf, MIN(len, http_server->body_expect_size), 0);
 		if (nread <= 0) {
 			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-				LOG(LOG_DEBUG, "%s %s fd=%d loop[%d] nread=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
+				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
 				connection_read_done(connection);
 			} else {
 				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d %s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread, strerror(errno));
-				http_server_close(http_session, -1);
 				error = 1;
 			}
 			break;
 		}
-		nread = MIN(nread, http_server->body_expect_size);
 		buffer->len += nread;
 		total_read += nread;
 		http_session->body_high += nread;
