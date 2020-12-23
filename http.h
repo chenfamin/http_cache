@@ -40,6 +40,8 @@
 #define MAX_LOOP 4
 
 #define PAGE_SIZE (1024 * 4)
+#define MAX_READ  (PAGE_SIZE * MAX_LOOP)
+#define MAX_WRITE (PAGE_SIZE * MAX_LOOP)
 #define PAGE_MAX_COUNT 32
 #define DEFAULT_STRING_SIZE 1024
 #define MAX_EPOLL_FD 1024

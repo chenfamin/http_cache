@@ -483,7 +483,6 @@ static void http_client_close(struct http_session_t *http_session, int error_cod
 	string_clean(&http_client->reply_header);
 	http_free(http_client);
 	http_session->http_client = NULL;
-	http_client_write_resume(http_session);//this will free full body buffer then server can continue read body if need
 	if (http_session->http_server) {
 		if (http_session->abort) {
 			http_server_close(http_session, -1);
@@ -561,7 +560,7 @@ static void http_client_read_resume(struct http_session_t *http_session)
 	if (http_client) {
 		if (http_request->parse_state < PARSER_HEADER_DONE) {
 			connection_read_enable(http_client->connection, http_client_header_read);
-		} else if (http_session->post_high < http_client->post_offset + http_client->post_expect_size) {
+		} else if (http_client->post_expect_size > 0) {
 			if (buffer_node_pool_size(&http_session->post_free_pool) >= buffer_node_pool_size(&http_session->post_data_pool)) {
 				connection_read_enable(http_client->connection, http_client_body_read);
 			}
@@ -645,14 +644,13 @@ static void http_client_body_read(struct connection_t *connection)
 	char *buf = NULL;
 	size_t len = 0;
 	ssize_t nread = 0;
-	int loop = 0;
-	int socket_error = 0;
+	size_t total_read = 0;
+	int error = 0;
 	assert(connection == http_client->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer = http_session_post_alloc(http_session)) && loop < MAX_LOOP) {
+	while ((buffer = http_session_post_alloc(http_session)) && total_read < MAX_READ) {
 		buf = buffer->buf + buffer->len;
 		len = buffer->size - buffer->len;
-		loop++;
 		nread = http_recv(connection->fd, buf, len, 0);
 		if (nread <= 0) {
 			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -660,21 +658,25 @@ static void http_client_body_read(struct connection_t *connection)
 				connection_read_done(connection);
 			} else {
 				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d error:%s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread, strerror(errno));
-				socket_error = -1;
+				error = -1;
 			}
 			break;
 		}
-		LOG(LOG_DEBUG, "%s %s fd=%d nread=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
+		nread = MIN(nread, http_client->post_expect_size);
+		total_read += nread;
 		buffer->len += nread;
 		http_session->post_high += nread;
+		http_client->post_expect_size -= nread;
 	}
-	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
-	http_server_write_resume(http_session);
-	if (socket_error) {
-		http_client_close(http_session, socket_error);
+	LOG(LOG_DEBUG, "%s %s fd=%d total_read=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, total_read);
+	if (total_read > 0) {
+		http_server_write_resume(http_session);
+	}
+	if (error) {
+		http_client_close(http_session, error);
 		return;
 	}
-	if (http_session->post_high >= http_client->body_offset + http_client->post_expect_size) {
+	if (http_client->post_expect_size > 0) {
 		LOG(LOG_DEBUG, "%s %s fd=%d read done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
 	}
 	if (buffer) {
@@ -823,6 +825,8 @@ static void http_client_build_error_reply(struct http_session_t *http_session, i
 static void http_client_write_resume(struct http_session_t *http_session)
 {
 	struct http_client_t *http_client = http_session->http_client;
+	struct buffer_node_t *buffer_node = NULL;
+	struct buffer_t *buffer = NULL;
 	if (http_client) {
 		if (string_strlen(&http_client->reply_header) > http_client->reply_header_send_size) {
 			connection_write_enable(http_client->connection, http_client_header_write);
@@ -830,8 +834,6 @@ static void http_client_write_resume(struct http_session_t *http_session)
 			connection_write_enable(http_client->connection, http_client_body_write);
 		}
 	} else {
-		struct buffer_node_t *buffer_node = NULL;
-		struct buffer_t *buffer = NULL;
 		while ((buffer_node = buffer_node_pool_head(&http_session->body_data_pool))) {
 			buffer = buffer_node->buffer;
 			if (buffer_full(buffer)) {
@@ -885,12 +887,12 @@ static void http_client_body_write(struct connection_t *connection)
 	char *buf = NULL;
 	size_t len = 0;
 	ssize_t nwrite = 0;
-	int loop = 0;
-	int socket_error = 0;
+	size_t total_write = 0;
+	int error = 0;
 	int64_t body_pos = 0;
 	assert(connection == http_client->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer_node = buffer_node_pool_head(&http_session->body_data_pool)) && loop < MAX_LOOP) {
+	while ((buffer_node = buffer_node_pool_head(&http_session->body_data_pool)) && http_client->body_expect_size > 0 && total_write < MAX_WRITE) {
 		buffer = buffer_node->buffer;
 		body_pos = http_client->body_offset + http_client->body_send_size;
 		if (body_pos >= http_session->body_low + buffer->len) {
@@ -905,10 +907,7 @@ static void http_client_body_write(struct connection_t *connection)
 		nwrite = (ssize_t)(body_pos - http_session->body_low);
 		buf = buffer->buf + nwrite;
 		len = buffer->len - nwrite;
-		if (http_client->body_send_size + len > http_client->body_expect_size) {
-			len = http_client->body_expect_size - http_client->body_send_size;
-		}
-		loop++;
+		len = MIN(len, http_client->body_expect_size);
 		nwrite = http_send(connection->fd, buf, len, 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -916,23 +915,20 @@ static void http_client_body_write(struct connection_t *connection)
 				connection_write_done(connection);
 			} else {
 				LOG(LOG_DEBUG, "%s %s fd=%d send=%d error:%s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite, strerror(errno));
-				socket_error = -1;
+				error = -1;
 			}
 			break;
 		}
-		LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
-		http_client->body_send_size += nwrite;
 		if (buffer_full(buffer) && buf + nwrite == buffer->buf + buffer->len) {
 			http_session_body_free(http_session);
 		}
+		http_client->body_send_size += nwrite;
+		http_client->body_expect_size -= nwrite;
+		total_write += nwrite;
 	}
-	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
+	LOG(LOG_DEBUG, "%s %s fd=%d total_write=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, total_write);
 	http_server_read_resume(http_session);
-	if (socket_error) {
-		http_client_close(http_session, socket_error);
-		return;
-	}
-	if (http_client->body_send_size < http_client->body_expect_size) {
+	if (error == 0 && http_client->body_expect_size > 0) {
 		if (buffer_node) {
 			connection_write_enable(connection, http_client_body_write);//read write next event loop
 		} else {
@@ -941,7 +937,7 @@ static void http_client_body_write(struct connection_t *connection)
 		}
 	} else {
 		LOG(LOG_DEBUG, "%s %s fd=%d reply write done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-		http_client_close(http_session, 0);
+		http_client_close(http_session, error);
 	}
 }
 
@@ -1184,12 +1180,12 @@ static void http_server_body_write(struct connection_t *connection)
 	char *buf = NULL;
 	ssize_t len = 0;
 	ssize_t nwrite = 0;
-	int loop = 0;
-	int socket_error = 0;
+	size_t total_write = 0;
+	int error = 0;
 	int64_t post_pos = 0;
 	assert(connection == http_server->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer_node = buffer_node_pool_head(&http_session->post_data_pool)) && loop < MAX_LOOP) {
+	while ((buffer_node = buffer_node_pool_head(&http_session->post_data_pool)) && http_server->post_expect_size > 0 && total_write < MAX_WRITE) {
 		buffer = buffer_node->buffer;
 		post_pos = 0 + http_server->post_send_size;
 		if (post_pos >= http_session->post_low + buffer->len) {
@@ -1204,10 +1200,7 @@ static void http_server_body_write(struct connection_t *connection)
 		nwrite = (ssize_t)(post_pos - http_session->post_low);
 		buf = buffer->buf + nwrite;
 		len = buffer->len - nwrite;
-		if (http_server->post_send_size + len > http_server->post_expect_size) {
-			len = http_server->post_expect_size - http_server->post_send_size;
-		}
-		loop++;
+		len = MIN(len, http_server->post_expect_size);
 		nwrite = http_send(connection->fd, buf, len, 0);
 		if (nwrite <= 0) {
 			if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -1215,23 +1208,23 @@ static void http_server_body_write(struct connection_t *connection)
 				connection_write_done(connection);
 			} else {
 				LOG(LOG_DEBUG, "%s %s fd=%d send=%d error:%s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite, strerror(errno));
-				socket_error = -1;
+				error = -1;
 			}
 			break;
 		}
-		LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nwrite);
 		http_server->post_send_size += nwrite;
+		http_server->post_expect_size -= nwrite;
 		if (buffer_full(buffer) && buf + nwrite == buffer->buf + buffer->len) {
 			http_session_post_free(http_session);
 		}
 	}
-	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
+	LOG(LOG_DEBUG, "%s %s fd=%d total_write=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, total_write);
 	http_client_read_resume(http_session);
-	if (socket_error) {
-		http_server_close(http_session, socket_error);
+	if (error) {
+		http_server_close(http_session, error);
 		return;
 	}
-	if (http_server->post_send_size < http_server->post_expect_size) {
+	if (http_server->post_expect_size > 0) {
 		if (buffer_node) {
 			connection_write_enable(connection, http_server_body_write);//read write next event loop
 		} else {
@@ -1316,6 +1309,7 @@ static void http_session_body_append(struct http_session_t *http_session, const 
 		len -= ncopy;
 		buffer->len += ncopy;
 		http_session->body_high += ncopy;
+		http_server->body_expect_size -= ncopy;
 		if (buffer_full(buffer) && http_session->cache_client) {
 			cache_client_body_append(http_session->cache_client, buffer);
 		}
@@ -1331,7 +1325,7 @@ static void http_server_read_resume(struct http_session_t *http_session)
 		http_reply = http_server->parser.data;
 		if (http_reply && http_reply->parse_state < PARSER_HEADER_DONE) {
 			connection_read_enable(http_server->connection, http_server_header_read);
-		} else if (http_session->body_high < http_server->body_offset + http_server->body_expect_size) {
+		} else if (http_server->body_expect_size > 0) {
 			if (buffer_node_pool_size(&http_session->body_free_pool) >= buffer_node_pool_size(&http_session->body_data_pool)) {
 				connection_read_enable(http_server->connection, http_server_body_read);
 			}
@@ -1382,15 +1376,17 @@ static void http_server_header_read(struct connection_t *connection)
 	http_session_body_alloc_head(http_session);
 	if (nread > nparse) {
 		body_size = nread - nparse;
-		if (http_session->body_high + body_size > http_server->body_offset + http_server->body_expect_size) {
-			body_size = (size_t)(http_server->body_offset + http_server->body_expect_size - http_session->body_high);
-		}
+		body_size = MIN(body_size, http_server->body_expect_size);
 		http_session_body_append(http_session, buf + nparse, body_size);
 		if (http_server->chunked) {
 			http_server_parse_chunk(http_session, buf + nparse, body_size);
 		}
 	}
-	http_server_body_read(connection);
+	if (http_server->body_expect_size > 0) {
+		http_server_body_read(connection);
+	} else {
+		http_server_close(http_session, 0);
+	}
 }
 
 static void http_server_body_read(struct connection_t *connection)
@@ -1403,53 +1399,50 @@ static void http_server_body_read(struct connection_t *connection)
 	char *buf = NULL;
 	size_t len = 0;
 	ssize_t nread = 0;
-	int loop = 0;
-	int socket_error = 0;
+	size_t total_read = 0;
+	int error = 0;
 	assert(connection == http_server->connection);
 	assert(connection->epoll_thread == http_session->epoll_thread);
-	while ((buffer = http_session_body_alloc(http_session)) && loop < MAX_LOOP) {
+	while ((buffer = http_session_body_alloc(http_session)) && http_server->body_expect_size > 0 && total_read < MAX_READ) {
 		buf = buffer->buf + buffer->len;
 		len = buffer->size - buffer->len;
-		loop++;
 		nread = http_recv(connection->fd, buf, len, 0);
 		if (nread <= 0) {
 			if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
+				LOG(LOG_DEBUG, "%s %s fd=%d loop[%d] nread=%d again\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
 				connection_read_done(connection);
 			} else {
-				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d error:%s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread, strerror(errno));
-				socket_error = -1;
+				LOG(LOG_DEBUG, "%s %s fd=%d nread=%d %s\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread, strerror(errno));
+				http_server_close(http_session, -1);
+				error = 1;
 			}
 			break;
 		}
-		LOG(LOG_DEBUG, "%s %s fd=%d nread=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, nread);
-		if (http_session->body_high + nread > http_server->body_offset + http_server->body_expect_size) {
-			nread = (ssize_t)(http_server->body_offset + http_server->body_expect_size - http_session->body_high);
-		}
+		nread = MIN(nread, http_server->body_expect_size);
 		buffer->len += nread;
+		total_read += nread;
 		http_session->body_high += nread;
+		http_server->body_expect_size -= nread;
 		if (cache_client && buffer_full(buffer)) {
 			cache_client_body_append(cache_client, buffer);
 		}
 		if (http_server->chunked) {
-			if (http_server_parse_chunk(http_session, buf, nread)) {
-				socket_error = -1;
-				break;
-			}
+			http_server_parse_chunk(http_session, buf, nread);
 		}
 	}
-	http_client_write_resume(http_session);
-	LOG(LOG_DEBUG, "%s %s fd=%d loop=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, loop);
-	if (socket_error || http_session->body_high >= http_server->body_offset + http_server->body_expect_size) {
-		LOG(LOG_DEBUG, "%s %s fd=%d read done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-		http_server_close(http_session, socket_error);
-	} else {
+	LOG(LOG_DEBUG, "%s %s fd=%d total_read=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, total_read);
+	if (total_read > 0) {
+		http_client_write_resume(http_session);
+	}
+	if (error == 0 && http_server->body_expect_size > 0) {
 		if (buffer) {
 			connection_read_enable(connection, http_server_body_read);
 		} else {
 			LOG(LOG_DEBUG, "%s %s fd=%d buffer full\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
 			connection_read_disable(connection);
 		}
+	} else {
+		http_server_close(http_session, error);
 	}
 }
 
@@ -1550,9 +1543,9 @@ static int http_server_parse_chunk(struct http_session_t *http_session, const ch
 		}    
 		if (rc == HTTP_DONE) {
 			LOG(LOG_DEBUG, "%s %s fd=%d done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-			http_server->body_expect_size = http_session->body_high - http_server->body_offset;
+			http_server->body_expect_size = 0;
 			if (http_client) {
-				http_client->body_expect_size = http_session->body_high - http_client->body_offset;
+				http_client->body_expect_size = http_session->body_high - http_client->body_send_size;
 			}
 			break;
 		}    
@@ -1560,6 +1553,7 @@ static int http_server_parse_chunk(struct http_session_t *http_session, const ch
 			break;
 		}    
 		LOG(LOG_ERROR, "%s %s fd=%d error\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
+		assert(0);
 		return -1;
 	}
 	return 0;
