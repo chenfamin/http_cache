@@ -34,10 +34,11 @@ struct cache_table_t {
 };
 
 struct cache_file_t {
+	struct list_head_t delay_list;
 	char *header;
 	int header_size;
 	unsigned char *bitmap;
-	int64_t file_number;// alloc or pass file_number
+	char path[256];
 	int fd;
 };
 
@@ -64,9 +65,13 @@ struct cache_client_t {
 	struct buffer_node_pool_t body_data_pool;
 	struct buffer_t *buffers[MAX_LOOP];
 	int loop;
-	struct list_head_t writing_list;
 	struct aio_t aio;
-	void (*open_done)(struct cache_client_t*);
+	struct {
+		int write_header:1;
+		int write_body:1;
+	} action;
+	char *header;
+	int header_size;
 };
 
 struct http_client_t {

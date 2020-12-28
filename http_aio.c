@@ -34,78 +34,44 @@ void aio_list_broadcast()
 	pthread_mutex_unlock(&aio_list.mutex);
 }
 
-void aio_summit_exec(struct aio_t *aio)
+void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)(struct aio_t *aio))
 {
-	assert(aio->status == AIO_STATUS_DONE);
 	assert(aio->epoll_thread != NULL);
-	aio->status = AIO_STATUS_SUMMIT;
+	assert(aio->status == AIO_STATUS_DONE);
+	aio->exec = exec;
+	aio->done = done;
 	pthread_mutex_lock(&aio_list.mutex);
 	list_add_tail(&aio->node, &aio_list.list);
+	aio->status = AIO_STATUS_SUMMIT;
 	pthread_cond_signal(&aio_list.cond);
 	pthread_mutex_unlock(&aio_list.mutex);
 }
 
 void aio_exec(struct aio_t *aio)
 {
-	aio->exec(aio);
-	aio_summit_done(aio);
-}
-
-void aio_done(struct aio_t *aio)
-{
-	assert(aio->status == AIO_STATUS_SUMMIT);
-	aio->status = AIO_STATUS_DONE;
-	aio->done(aio);
-}
-
-void aio_summit_done(struct aio_t *aio)
-{
 	struct epoll_thread_t *epoll_thread = aio->epoll_thread;
+	aio->exec(aio);
 	pthread_mutex_lock(&epoll_thread->done_mutex);
 	list_add_tail(&aio->node, &epoll_thread->done_list);
 	pthread_mutex_unlock(&epoll_thread->done_mutex);
 	epoll_thread_pipe_signal(epoll_thread);
 }
 
-int aio_busy(struct aio_t *aio)
+void aio_done(struct aio_t *aio)
 {
-	return aio->status > AIO_STATUS_DONE;
-}
-
-void aio_open(struct aio_t *aio)
-{
-	aio->return_ret = open(aio->path, aio->flags, aio->mode);
-	aio->return_errno = errno;
-}
-
-void aio_pwritev(struct aio_t *aio)
-{
-	int64_t offset = aio->offset;
-	ssize_t nwrite = 0;
-	ssize_t n;
-	int i = 0;
-	for (i = 0; i < aio->iovec_count; i++) {
-		n = 0;
-		while (n < aio->iovec[i].iov_len) {
-			nwrite = pwrite(aio->fd, aio->iovec[i].iov_base + n, aio->iovec[i].iov_len - n, aio->offset);
-			if (nwrite > 0) {
-				n += nwrite;
-				aio->offset += nwrite;
-			} else {
-				aio->return_ret = (int)(aio->offset - offset);
-				aio->return_errno = errno;
-				return;
-			}
-		}
-	}
-	aio->return_ret = (int)(aio->offset - offset);
-	aio->return_errno = errno;
+	aio->status = AIO_STATUS_DONE;
+	aio->done(aio);
 }
 
 void aio_close(struct aio_t *aio)
 {
 	aio->return_ret = close(aio->fd);
 	aio->return_errno = errno;
+}
+
+int aio_busy(struct aio_t *aio)
+{
+	return aio->status > AIO_STATUS_DONE;
 }
 
 ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset)

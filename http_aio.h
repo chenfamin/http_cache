@@ -14,11 +14,6 @@ struct aio_t {
 	struct list_head_t node;
 	enum aio_status_t status;
 	int fd;
-	int flags;
-	mode_t mode;
-	char *path;
-	struct iovec iovec[MAX_IOVEC];
-	int iovec_count;
 	int64_t offset;
 	int return_ret;
 	int return_errno;
@@ -39,10 +34,9 @@ void aio_list_free();
 struct aio_list_t* aio_list_get();
 void aio_list_broadcast();
 
-void aio_summit_exec(struct aio_t *aio);
+void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)(struct aio_t *aio));
 void aio_exec(struct aio_t *aio);
 void aio_done(struct aio_t *aio);
-void aio_summit_done(struct aio_t *aio);
 int aio_busy(struct aio_t *aio);
 
 void aio_open(struct aio_t *aio);
