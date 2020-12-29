@@ -73,12 +73,11 @@ static void cache_file_create_exec(struct aio_t *aio);
 static void cache_file_create_done(struct aio_t *aio);
 static void cache_client_write_open_done(struct aio_t *aio);
 static void cache_client_header_append(struct cache_client_t *cache_client);
-static void cache_client_header_write(struct cache_client_t *cache_client);
 static void cache_client_header_write_exec(struct aio_t *aio);
 static void cache_client_header_write_done(struct aio_t *aio);
 static void cache_client_body_append(struct cache_client_t *cache_client, struct buffer_t *buffer);
 static void cache_client_body_append_end(struct cache_client_t *cache_client);
-static void cache_client_body_write(struct cache_client_t *cache_client);
+static void cache_client_do_write(struct cache_client_t *cache_client);
 static void cache_client_body_write_exec(struct aio_t *aio);
 static void cache_client_body_write_done(struct aio_t *aio);
 static struct cache_t* cache_alloc(const char *key);
@@ -1761,12 +1760,7 @@ static void cache_client_write_open_done(struct aio_t *aio)
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	if (cache_file->fd > 0) {
-		if (cache_client->header) {
-			cache_client_header_write(cache_client);
-		} else {
-			LOG(LOG_DEBUG, "%s %s %s fd=%d skip header\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_file->fd);
-			cache_client_header_write_done(&cache_client->aio);
-		}
+		cache_client_do_write(cache_client);
 	} else {
 		LOG(LOG_ERROR, "%s %s %s fd=%d cannot write\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_file->fd);
 		cache_client_unlock(cache_client, 1);
@@ -1792,17 +1786,6 @@ static void cache_client_header_append(struct cache_client_t *cache_client)
 	LOG(LOG_INFO, "%s %s reply=\n%s", cache_client->epoll_thread->name, cache->url, string_buf(&string));
 	cache_client->header = string_buf(&string);
 	cache_client->header_size = string_strlen(&string);
-	cache_client->action.write_header = 1;
-}
-
-static void cache_client_header_write(struct cache_client_t *cache_client)
-{
-	struct cache_t *cache = cache_client->cache;
-	struct cache_file_t *cache_file = cache->cache_file;
-	LOG(LOG_DEBUG, "%s %s %s fd=%d header_size=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_file->fd, cache_client->header_size);
-	cache_client->aio.fd = cache_file->fd;
-	cache_client->aio.offset = 0;
-	aio_summit(&cache_client->aio, cache_client_header_write_exec, cache_client_header_write_done);
 }
 
 static void cache_client_header_write_exec(struct aio_t *aio)
@@ -1836,9 +1819,7 @@ static void cache_client_header_write_done(struct aio_t *aio)
 			return;
 		}
 	}
-	if (buffer_node_pool_size(&cache_client->body_data_pool) > 0) {
-		cache_client_body_write(cache_client);
-	}
+	cache_client_do_write(cache_client);
 }
 
 static void cache_client_body_append(struct cache_client_t *cache_client, struct buffer_t *buffer)
@@ -1854,7 +1835,9 @@ static void cache_client_body_append(struct cache_client_t *cache_client, struct
 	if (aio_busy(&cache_client->aio)) {
 		return;
 	}
-	cache_client_body_write(cache_client);
+	if (!aio_busy(&cache_client->aio)) {
+		cache_client_do_write(cache_client);
+	}
 }
 
 static void cache_client_body_append_end(struct cache_client_t *cache_client)
@@ -1869,34 +1852,43 @@ static void cache_client_body_append_end(struct cache_client_t *cache_client)
 			cache_client_body_append(cache_client, buffer);
 		} else {
 			LOG(LOG_DEBUG, "%s %s skip len=%d\n", cache_client->epoll_thread->name, cache->url, buffer->len);
+			if (!aio_busy(&cache_client->aio)) {
+				cache_client_do_write(cache_client);
+			}
 		}
-	}
-	if (aio_busy(&cache_client->aio)) {
-		return;
-	}
-	if (buffer_node_pool_size(&cache_client->body_data_pool) > 0) {
-		cache_client_body_write(cache_client);
 	}
 }
 
-static void cache_client_body_write(struct cache_client_t *cache_client)
+static void cache_client_do_write(struct cache_client_t *cache_client)
 {
-	int loop = 0;
+	struct cache_t *cache = cache_client->cache;
+	struct cache_file_t *cache_file = cache->cache_file;
 	struct buffer_node_t *buffer_node = NULL;
+	int loop = 0;
 	assert(!aio_busy(&cache_client->aio));
-	LOG(LOG_DEBUG, "%s %s fd=%d start\n", cache_client->epoll_thread->name, cache_client->cache->url, cache_client->aio.fd);
-	while (loop < MAX_LOOP) {
-		buffer_node_pool_pop(&cache_client->body_data_pool, &buffer_node);
-		if (buffer_node == NULL) {
-			break;
-		}
-		cache_client->buffers[loop++] = buffer_node->buffer;
-	}
-	assert(loop > 0);
-	cache_client->loop = loop;
+	cache_client->aio.fd = cache_file->fd;
 	cache_client->aio.return_ret = 0;
 	cache_client->aio.return_errno = 0;
-	aio_summit(&cache_client->aio, cache_client_body_write_exec, cache_client_body_write_done);
+	if (cache_client->header) {
+		assert(cache_client->header_size > 0);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d header_size=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->header_size);
+		cache_client->aio.offset = 0;
+		aio_summit(&cache_client->aio, cache_client_header_write_exec, cache_client_header_write_done);
+	} else if (buffer_node_pool_size(&cache_client->body_data_pool) > 0) {
+		LOG(LOG_DEBUG, "%s %s %s fd=%d body write\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+		while (loop < MAX_LOOP) {
+			buffer_node_pool_pop(&cache_client->body_data_pool, &buffer_node);
+			if (buffer_node == NULL) {
+				break;
+			}
+			cache_client->buffers[loop++] = buffer_node->buffer;
+		}
+		assert(loop > 0);
+		cache_client->loop = loop;
+		aio_summit(&cache_client->aio, cache_client_body_write_exec, cache_client_body_write_done);
+	} else {
+		LOG(LOG_DEBUG, "%s %s %s fd=%d nothing to do\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+	}
 }
 
 static void cache_client_body_write_exec(struct aio_t *aio)
@@ -1926,9 +1918,7 @@ static void cache_client_body_write_done(struct aio_t *aio)
 	int nwrite = aio->return_ret;
 	if (nwrite > 0) {
 		LOG(LOG_DEBUG, "%s %s fd=%d nwrite=%d\n", cache_client->epoll_thread->name, cache->url, aio->fd, nwrite);
-		if (buffer_node_pool_size(&cache_client->body_data_pool) > 0) {
-			cache_client_body_write(cache_client);
-		}
+		cache_client_do_write(cache_client);
 	} else {
 		LOG(LOG_ERROR, "%s %s fd=%d nwrite=%d error:%s\n", cache_client->epoll_thread->name, cache->url, aio->fd, nwrite, strerror(aio->return_errno));
 		cache_client_unlock(cache_client, 1);
