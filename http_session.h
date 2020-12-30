@@ -35,9 +35,11 @@ struct cache_table_t {
 
 struct cache_file_t {
 	struct list_head_t delay_list;
-	char *header;
-	int header_size;
+	size_t header_size;
+	size_t bitmap_bit_size;
+	size_t bitmap_byte_size;
 	unsigned char *bitmap;
+	size_t bitmap_size;
 	char path[256];
 	int fd;
 };
@@ -52,26 +54,28 @@ struct cache_t {
 	struct http_reply_t *http_reply;
 	int64_t file_number;
 	struct cache_file_t *cache_file;
+	struct {
+		int del:1;
+	} flags;
 };
 
 struct cache_client_t {
+	struct cache_t *cache;
 	void *http_session;
 	struct epoll_thread_t *epoll_thread;
-	struct cache_t *cache;
-	int64_t body_current_offset;
-	int64_t body_low;
-	int64_t body_high;
 	struct buffer_node_pool_t body_free_pool;
 	struct buffer_node_pool_t body_data_pool;
-	struct buffer_t *buffers[MAX_LOOP];
-	int loop;
+	struct buffer_t *buffer_array[MAX_LOOP + 1];
+	int buffer_size;
 	struct aio_t aio;
 	struct {
 		int write_header:1;
 		int write_body:1;
 	} action;
 	char *header;
-	int header_size;
+	size_t header_size;
+	int64_t body_pos;
+	size_t bitmap_pos;
 };
 
 struct http_client_t {
