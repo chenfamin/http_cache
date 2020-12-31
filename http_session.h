@@ -36,12 +36,14 @@ struct cache_table_t {
 struct cache_file_t {
 	struct list_head_t delay_list;
 	size_t header_size;
+	int64_t bitmap_content_length;
 	size_t bitmap_bit_size;
 	size_t bitmap_byte_size;
 	unsigned char *bitmap;
 	size_t bitmap_size;
 	char path[256];
-	int fd;
+	struct aio_t aio;// only for open close delete
+	void *cache;// only open and close
 };
 
 struct cache_t {
