@@ -36,14 +36,12 @@ struct cache_table_t {
 struct cache_file_t {
 	struct list_head_t delay_list;
 	size_t header_size;
-	int64_t bitmap_content_length;
 	size_t bitmap_bit_size;
 	size_t bitmap_byte_size;
 	unsigned char *bitmap;
 	size_t bitmap_size;
 	char path[256];
-	struct aio_t aio;// only for open close delete
-	void *cache;// only open and close
+	int fd;
 };
 
 struct cache_t {
@@ -62,18 +60,17 @@ struct cache_t {
 };
 
 struct cache_client_t {
-	struct cache_t *cache;
+	union {
+		struct cache_t *cache;
+		int64_t file_number;// only for delete file
+	};
 	void *http_session;
-	struct epoll_thread_t *epoll_thread;
 	struct buffer_node_pool_t body_free_pool;
 	struct buffer_node_pool_t body_data_pool;
 	struct buffer_t *buffer_array[MAX_LOOP + 1];
 	int buffer_size;
 	struct aio_t aio;
-	struct {
-		int write_header:1;
-		int write_body:1;
-	} action;
+
 	char *header;
 	size_t header_size;
 	int64_t body_pos;

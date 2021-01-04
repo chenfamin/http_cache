@@ -67,14 +67,15 @@ static int http_reply_cacheable(struct http_reply_t *http_reply);
 static void http_session_lookup_cache(struct http_session_t *http_session);
 static int cache_client_header_process(struct cache_client_t *cache_client, struct http_reply_t *http_reply);
 static void cache_client_create(struct http_session_t *http_session, struct cache_t *cache);
-static void cache_client_close(struct cache_client_t *cache_client, int del);
+static void cache_client_free(struct cache_client_t *cache_client);
+static void cache_client_unlock(struct cache_client_t *cache_client, int del);
 static void cache_file_free(struct cache_file_t *cache_file);
-static void cache_file_create(struct cache_file_t *cache_file);
-static void cache_file_create_exec(struct aio_t *aio);
-static void cache_file_create_done(struct aio_t *aio);
-static void cache_file_close(struct cache_file_t *cache_file);
-static void cache_file_close_exec(struct aio_t *aio);
-static void cache_file_close_done(struct aio_t *aio);
+static void cache_client_file_create(struct cache_client_t *cache_client);
+static void cache_client_file_create_exec(struct aio_t *aio);
+static void cache_client_file_create_done(struct aio_t *aio);
+static void cache_client_file_close(struct cache_client_t *cache_client);
+static void cache_client_file_close_exec(struct aio_t *aio);
+static void cache_client_file_close_done(struct aio_t *aio);
 static void cache_client_write_open_done(struct aio_t *aio);
 static void cache_client_header_append(struct cache_client_t *cache_client);
 static void cache_client_header_write_exec(struct aio_t *aio);
@@ -418,7 +419,7 @@ static void http_session_close(struct http_session_t *http_session)
 			LOG(LOG_INFO, "%s %s aio busy\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 			cache_client->http_session = NULL;
 		} else {
-			cache_client_close(cache_client, 0);
+			cache_client_unlock(cache_client, 0);
 		}
 		http_session->cache_client = NULL;
 	}
@@ -1656,8 +1657,8 @@ static int cache_client_header_process(struct cache_client_t *cache_client, stru
 		if (cache->http_reply) {
 			if (cache->http_reply->content_length != http_reply->content_length) {
 				LOG(LOG_ERROR, "%s %s reply disable cache old content_length=%"PRId64" new content_length=%"PRId64"\n%s",
-						cache_client->epoll_thread->name, cache->url, cache->http_reply->content_length, http_reply->content_length);
-				cache_client_close(cache_client, 1);
+						cache_client->aio.epoll_thread->name, cache->url, cache->http_reply->content_length, http_reply->content_length);
+				cache_client_unlock(cache_client, 1);
 				return 0;
 			}
 		} else {
@@ -1666,30 +1667,24 @@ static int cache_client_header_process(struct cache_client_t *cache_client, stru
 			cache_client_header_append(cache_client);
 		}
 	} else {
-		LOG(LOG_DEBUG, "%s %s reply disable cache\n", cache_client->epoll_thread->name, cache->url);
-		cache_client_close(cache_client, 1);
+		LOG(LOG_DEBUG, "%s %s reply disable cache\n", cache_client->aio.epoll_thread->name, cache->url);
+		cache_client_unlock(cache_client, 1);
 		return 0;
 	}
 	cache_client->body_pos = http_server->body_offset;
 	if (cache_file == NULL) {
-		LOG(LOG_DEBUG, "%s %s cache file create start\n", cache_client->epoll_thread->name, cache->url);
+		LOG(LOG_DEBUG, "%s %s cache file create start\n", cache_client->aio.epoll_thread->name, cache->url);
 		cache->cache_file = cache_file = http_malloc(sizeof(struct cache_file_t));
 		memset(cache_file, 0, sizeof(struct cache_file_t));
 		INIT_LIST_HEAD(&cache_file->delay_list);
 		cache_file->header_size = cache_client->header_size;
-		cache_file->aio.epoll_thread = cache_client->epoll_thread;
-		cache_file->aio.callback_data = cache_file;
-		cache_file->bitmap_content_length = cache->http_reply->content_length;
-		cache_file->cache = cache;
-		cache_client->aio.status = AIO_STATUS_SUMMIT;
-		list_add_tail(&cache_client->aio.node, &cache_file->delay_list);
-		cache_file_create(cache_file);
-	} else if (aio_busy(&cache_file->aio)) {
-		LOG(LOG_DEBUG, "%s %s cache file create wait\n", cache_client->epoll_thread->name, cache->url);
+		cache_client_file_create(cache_client);
+	} else if (cache_file->fd == -1) {
+		LOG(LOG_DEBUG, "%s %s cache file create wait\n", cache_client->aio.epoll_thread->name, cache->url);
 		cache_client->aio.status = AIO_STATUS_SUMMIT;
 		list_add_tail(&cache_client->aio.node, &cache_file->delay_list);
 	} else {
-		LOG(LOG_DEBUG, "%s %s cache file fd=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->aio.fd);
+		LOG(LOG_DEBUG, "%s %s cache file fd=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->fd);
 		cache_client_write_open_done(&cache_client->aio);
 	}
 	return 0;
@@ -1700,25 +1695,29 @@ static void cache_client_create(struct http_session_t *http_session, struct cach
 	struct cache_client_t *cache_client = NULL;
 	http_session->cache_client = cache_client = http_malloc(sizeof(struct cache_client_t));
 	memset(cache_client, 0, sizeof(struct cache_client_t));
-	cache_client->http_session = http_session;
-	cache_client->epoll_thread = http_session->epoll_thread;
 	cache_client->cache = cache;
+	cache_client->http_session = http_session;
 	buffer_node_pool_init(&cache_client->body_free_pool, PAGE_MAX_COUNT);
 	buffer_node_pool_init(&cache_client->body_data_pool, 0);
 	cache_client->aio.callback_data = cache_client;
-	cache_client->aio.epoll_thread = cache_client->epoll_thread;
+	cache_client->aio.epoll_thread = cache_client->aio.epoll_thread;
 }
 
-static void cache_client_close(struct cache_client_t *cache_client, int del)
+static void cache_client_free(struct cache_client_t *cache_client)
+{
+	http_free(cache_client);
+}
+
+static void cache_client_unlock(struct cache_client_t *cache_client, int del)
 {
 	struct http_session_t *http_session = cache_client->http_session;
 	struct cache_t *cache = cache_client->cache;
-	struct cache_file_t *cache_file = NULL;
-	LOG(LOG_DEBUG, "%s %s\n", cache_client->epoll_thread->name, cache->url);
-	http_free(cache_client);
+	struct cache_file_t *cache_file = cache->cache_file;
+	LOG(LOG_DEBUG, "%s %s\n", cache_client->aio.epoll_thread->name, cache->url);
 	if (http_session) {
 		http_session->cache_client = NULL;
 	}
+	cache_client->cache = NULL;
 	cache_table_lock();
 	if (del && cache->flags.del == 0) {
 		cache_table_erase(cache);
@@ -1726,14 +1725,22 @@ static void cache_client_close(struct cache_client_t *cache_client, int del)
 	}
 	if (--cache->lock == 0) {
 		cache->epoll_thread = NULL;
-		cache_file = cache->cache_file;
-		cache->cache_file = NULL;
+		if (cache_file) {
+			cache_client->aio.fd = cache_file->fd;
+			cache->cache_file = NULL;
+		}
+		if (cache->flags.del && cache->file_number > 0) {
+			cache_client->file_number = cache->file_number;
+		}
 	}
 	cache_table_unlock();
 	if (cache_file) {
-		if (cache_file->aio.fd > 0) {
-			cache_file_close(cache_file);
-		}
+		cache_file_free(cache_file);
+	}
+	if (cache_client->aio.fd > 0 || cache_client->file_number > 0) {
+		cache_client_file_close(cache_client);
+	} else {
+		cache_client_free(cache_client);
 	}
 }
 
@@ -1745,43 +1752,51 @@ static void cache_file_free(struct cache_file_t *cache_file)
 	http_free(cache_file);
 }
 
-static void cache_file_create(struct cache_file_t *cache_file)
+static void cache_client_file_create(struct cache_client_t *cache_client)
 {
-	aio_summit(&cache_file->aio, cache_file_create_exec, cache_file_create_done);
+	aio_summit(&cache_client->aio, cache_client_file_create_exec, cache_client_file_create_done);
 }
 
-static void cache_file_create_exec(struct aio_t *aio)
+static void cache_client_file_create_exec(struct aio_t *aio)
 {
-	struct cache_file_t *cache_file = aio->callback_data;
-	struct cache_t *cache = cache_file->cache;
+	struct cache_client_t *cache_client = aio->callback_data;
+	struct cache_t *cache = cache_client->cache;
+	struct cache_file_t *cache_file = cache->cache_file;
 	cache->file_number = 1;
 	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache->file_number);
 	aio->fd = aio->return_ret = open(cache_file->path, O_RDWR|O_CREAT|O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
 	aio->return_errno = errno;
 }
 
-static void cache_file_create_done(struct aio_t *aio)
+static void cache_client_file_create_done(struct aio_t *aio)
 {
-	struct cache_file_t *cache_file = aio->callback_data;
-	struct cache_t *cache = cache_file->cache;
+	struct cache_client_t *cache_client = aio->callback_data;
+	struct cache_t *cache = cache_client->cache;
+	struct cache_file_t *cache_file = cache->cache_file;
 	struct aio_t *aio_delay;
+	int fd = aio->fd;
 	if (aio->fd > 0) {
 		LOG(LOG_DEBUG, "%s %s %s fd=%d file create ok\n", aio->epoll_thread->name, cache->url, cache_file->path, aio->fd);
-		if (cache_file->bitmap_content_length > 0) {
+		if (cache->http_reply->content_length > 0) {
 			cache_file->bitmap_bit_size = BLOCK_SIZE;
 			cache_file->bitmap_byte_size = cache_file->bitmap_bit_size * 8;
-			cache_file->bitmap_size = (cache_file->bitmap_content_length + cache_file->bitmap_byte_size - 1) / cache_file->bitmap_byte_size;
+			cache_file->bitmap_size = (cache->http_reply->content_length + cache_file->bitmap_byte_size - 1) / cache_file->bitmap_byte_size;
 			cache_file->bitmap = http_malloc(cache_file->bitmap_size);
 			memset(cache_file->bitmap, 0, cache_file->bitmap_size);
 			LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_bit_size=%d bitmap_byte_size=%d bitmap_size=%d\n",
 					aio->epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_bit_size, cache_file->bitmap_byte_size, cache_file->bitmap_size);
 		}
+		cache_file->fd = fd;
 	} else {
 		LOG(LOG_ERROR, "%s %s %s fd=%d file create error:%s\n", aio->epoll_thread->name, cache->url, cache_file->path, aio->fd, strerror(aio->return_errno));
+		cache_file_free(cache_file);
+		cache->cache_file = NULL;
 	}
+	cache_client_write_open_done(aio);
 	while (!list_empty(&cache_file->delay_list)) {
 		aio_delay = d_list_head(&cache_file->delay_list, struct aio_t, node);
 		list_del(&aio_delay->node);
+		aio_delay->fd = fd;
 		aio_delay->status = AIO_STATUS_DONE;
 		cache_client_write_open_done(aio_delay);
 	}
@@ -1792,40 +1807,47 @@ static void cache_client_write_open_done(struct aio_t *aio)
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	aio->fd = cache_file->aio.fd;
 	if (aio->fd > 0) {
-		LOG(LOG_DEBUG, "%s %s %s fd=%d start write\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d start write\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd);
 		cache_client_do_write(cache_client);
 	} else {
-		LOG(LOG_ERROR, "%s %s %s fd=%d cannot write\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd);
-		cache_client_close(cache_client, 1);
+		LOG(LOG_ERROR, "%s %s %s fd=%d cannot write\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd);
+		cache_client_unlock(cache_client, 1);
 	}
 }
 
-static void cache_file_close(struct cache_file_t *cache_file)
+static void cache_client_file_close(struct cache_client_t *cache_client)
 {
-	LOG(LOG_DEBUG, "%s fd=%d start close\n", cache_file->aio.epoll_thread->name, cache_file->aio.fd);
-	assert(cache_file->aio.fd > 0);
-	aio_summit(&cache_file->aio, cache_file_close_exec, cache_file_close_done);
+	LOG(LOG_DEBUG, "%s fd=%d start close\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
+	assert(cache_client->aio.fd > 0);
+	aio_summit(&cache_client->aio, cache_client_file_close_exec, cache_client_file_close_done);
 }
 
-static void cache_file_close_exec(struct aio_t *aio)
+static void cache_client_file_close_exec(struct aio_t *aio)
 {
-	//struct cache_file_t *cache_file = aio->callback_data;
-	aio->return_ret = close(aio->fd);
-	aio->return_errno = errno;
+	struct cache_client_t *cache_client = aio->callback_data;
+	char path[256];
+	if (aio->fd > 0) {
+		aio->return_ret = close(aio->fd);
+		aio->return_errno = errno;
+	}
+	if (cache_client->file_number > 0) {
+		snprintf(path, sizeof(path), "/tmp/cache_%"PRId64".dat", cache_client->file_number);
+		aio->return_ret = unlink(path);
+		aio->return_errno = errno;
+	}
 }
 
-static void cache_file_close_done(struct aio_t *aio)
+static void cache_client_file_close_done(struct aio_t *aio)
 {
-	struct cache_file_t *cache_file = aio->callback_data;
+	struct cache_client_t *cache_client = aio->callback_data;
 	if (aio->return_ret == 0) {
 		LOG(LOG_DEBUG, "%s fd=%d close ok\n", aio->epoll_thread->name, aio->fd);
 	} else {
 		LOG(LOG_ERROR, "%s fd=%d close error:%s\n", aio->epoll_thread->name, aio->fd, strerror(aio->return_errno));
 	}
 	aio->fd = -1;
-	cache_file_free(cache_file);
+	cache_client_free(cache_client);
 }
 
 static void cache_client_header_append(struct cache_client_t *cache_client)
@@ -1844,7 +1866,7 @@ static void cache_client_header_append(struct cache_client_t *cache_client)
 		string_strcat(&string, "\r\n");
 	}    
 	string_strcat(&string, "\r\n"); 
-	LOG(LOG_INFO, "%s %s reply=\n%s", cache_client->epoll_thread->name, cache->url, string_buf(&string));
+	LOG(LOG_INFO, "%s %s reply=\n%s", cache_client->aio.epoll_thread->name, cache->url, string_buf(&string));
 	cache_client->header = string_buf(&string);
 	cache_client->header_size = string_strlen(&string);
 }
@@ -1873,10 +1895,10 @@ static void cache_client_header_write_done(struct aio_t *aio)
 		http_free(cache_client->header);
 		cache_client->header = NULL;
 		if (nwrite > 0) {
-			LOG(LOG_DEBUG, "%s %s %s fd=%d nwrite=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite);
+			LOG(LOG_DEBUG, "%s %s %s fd=%d nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite);
 		} else {
-			LOG(LOG_ERROR, "%s %s %s fd=%d nwrite=%d error:%s\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite, strerror(aio->return_errno));
-			cache_client_close(cache_client, 1);
+			LOG(LOG_ERROR, "%s %s %s fd=%d nwrite=%d error:%s\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite, strerror(aio->return_errno));
+			cache_client_unlock(cache_client, 1);
 			return;
 		}
 	}
@@ -1891,7 +1913,7 @@ static void cache_client_body_append(struct cache_client_t *cache_client, struct
 	buffer_node_pool_pop(&cache_client->body_free_pool, &buffer_node);
 	buffer_node->buffer = buffer_ref(buffer);
 	buffer_node_pool_push(&cache_client->body_data_pool, buffer_node);
-	LOG(LOG_DEBUG, "%s %s len=%d\n", cache_client->epoll_thread->name, cache->url, buffer->len);
+	LOG(LOG_DEBUG, "%s %s len=%d\n", cache_client->aio.epoll_thread->name, cache->url, buffer->len);
 	if (aio_busy(&cache_client->aio)) {
 		return;
 	}
@@ -1910,7 +1932,7 @@ static void cache_client_body_append_end(struct cache_client_t *cache_client)
 		if (http_session->body_high == cache->http_reply->content_length) {
 			cache_client_body_append(cache_client, buffer);
 		} else {
-			LOG(LOG_DEBUG, "%s %s skip len=%d\n", cache_client->epoll_thread->name, cache->url, buffer->len);
+			LOG(LOG_DEBUG, "%s %s skip len=%d\n", cache_client->aio.epoll_thread->name, cache->url, buffer->len);
 			if (!aio_busy(&cache_client->aio)) {
 				cache_client_do_write(cache_client);
 			}
@@ -1953,7 +1975,7 @@ static void cache_client_do_write(struct cache_client_t *cache_client)
 	if (cache_client->header) {
 		assert(cache_client->header_size > 0);
 		cache_client->aio.offset = 0;
-		LOG(LOG_DEBUG, "%s %s %s fd=%d header=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->header_size);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d header=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->header_size);
 		aio_summit(&cache_client->aio, cache_client_header_write_exec, cache_client_header_write_done);
 	} else if (buffer_node_pool_size(&cache_client->body_data_pool) > 0) {
 		cache_client->buffer_size = 0;
@@ -1970,12 +1992,12 @@ static void cache_client_do_write(struct cache_client_t *cache_client)
 			buffer_node_pool_push(&cache_client->body_free_pool, buffer_node);
 		}
 		cache_client->buffer_array[i] = NULL;
-		LOG(LOG_DEBUG, "%s %s %s fd=%d body=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->buffer_size);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d body=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->buffer_size);
 		aio_summit(&cache_client->aio, cache_client_body_write_exec, cache_client_body_write_done);
 	} else if (cache_client->http_session == NULL) {
-		cache_client_close(cache_client, 0);
+		cache_client_unlock(cache_client, 0);
 	}	else {
-		LOG(LOG_DEBUG, "%s %s %s fd=%d nothing write\n", cache_client->epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d nothing write\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
 	}
 }
 
@@ -2019,16 +2041,16 @@ static void cache_client_body_write_done(struct aio_t *aio)
 		if (cache_file->bitmap) {
 			cache_client_bitmap_update(cache_client);
 		}
-		LOG(LOG_DEBUG, "%s %s %s fd=%d nwrite=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite);
 		if (cache_client->buffer_size > nwrite) {
-			LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d > nwrite=%d\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_client->buffer_size, nwrite);
-			cache_client_close(cache_client, 1);
+			LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d > nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_client->buffer_size, nwrite);
+			cache_client_unlock(cache_client, 1);
 		} else {
 			cache_client_do_write(cache_client);
 		}
 	} else {
-		LOG(LOG_ERROR, "%s %s %s fd=%d nwrite=%d error:%s\n", cache_client->epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite, strerror(aio->return_errno));
-		cache_client_close(cache_client, 1);
+		LOG(LOG_ERROR, "%s %s %s fd=%d nwrite=%d error:%s\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite, strerror(aio->return_errno));
+		cache_client_unlock(cache_client, 1);
 	}
 }
 
