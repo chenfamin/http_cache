@@ -43,6 +43,7 @@ void aio_open(struct aio_t *aio);
 void aio_pwritev(struct aio_t *aio);
 void aio_close(struct aio_t *aio);
 
+ssize_t posix_pread(int fd, void *buf, size_t count, off_t offset);
 ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset);
 
 #endif

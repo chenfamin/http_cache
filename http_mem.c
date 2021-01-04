@@ -821,6 +821,11 @@ size_t string_strlen(const struct string_t *string)
 	return string->len;
 }
 
+size_t string_strsize(const struct string_t *string)
+{
+	return string->size;
+}
+
 char* string_buf(const struct string_t *string)
 {
 	return string->buf;

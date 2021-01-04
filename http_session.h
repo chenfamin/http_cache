@@ -82,6 +82,8 @@ struct cache_client_t {
 	size_t header_size;
 	int64_t body_pos;
 	size_t bitmap_pos;
+
+	http_parser parser;
 };
 
 struct http_client_t {

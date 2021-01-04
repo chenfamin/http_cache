@@ -57,6 +57,7 @@ void string_strcat(struct string_t *string, const char *s);
 void string_strncat(struct string_t *string, const char *s, size_t len);
 void string_strcat_printf(struct string_t *string, const char *format, ...);
 size_t string_strlen(const struct string_t *string);
+size_t string_strsize(const struct string_t *string);
 char* string_buf(const struct string_t *string);
 
 struct buffer_t* buffer_alloc(size_t size);

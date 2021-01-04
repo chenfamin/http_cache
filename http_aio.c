@@ -74,6 +74,11 @@ int aio_busy(struct aio_t *aio)
 	return aio->status > AIO_STATUS_DONE;
 }
 
+ssize_t posix_pread(int fd, void *buf, size_t count, off_t offset)
+{
+	return pread(fd, buf, count, offset);
+}
+
 ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset)
 {
 	return pwrite(fd, buf, count, offset);
