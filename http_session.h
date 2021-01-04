@@ -59,7 +59,14 @@ struct cache_t {
 	} flags;
 };
 
+enum cache_client_type_t {
+	CACHE_CLIENT_NONE,
+	CACHE_CLIENT_READ,
+	CACHE_CLIENT_WRITE,
+};
+
 struct cache_client_t {
+	enum cache_client_type_t type;
 	union {
 		struct cache_t *cache;
 		int64_t file_number;// only for delete file
