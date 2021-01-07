@@ -35,6 +35,7 @@ struct cache_table_t {
 
 struct cache_file_t {
 	struct list_head_t delay_list;
+	struct http_reply_t *http_reply;
 	size_t header_size;
 	size_t bitmap_bit_size;
 	size_t bitmap_byte_size;
@@ -51,7 +52,6 @@ struct cache_t {
 	int lock;
 
 	char *url;
-	struct http_reply_t *http_reply;
 	int64_t file_number;
 	struct cache_file_t *cache_file;
 	struct {
@@ -72,18 +72,17 @@ struct cache_client_t {
 		int64_t file_number;// only for delete file
 	};
 	void *http_session;
+	int bitmap_flush;
 	struct buffer_node_pool_t body_free_pool;
 	struct buffer_node_pool_t body_data_pool;
 	struct buffer_t *buffer_array[MAX_LOOP + 1];
 	int buffer_size;
 	struct aio_t aio;
 
-	char *header;
-	size_t header_size;
+	//char *header;
+	//size_t header_size;
 	int64_t body_pos;
 	size_t bitmap_pos;
-
-	http_parser parser;
 };
 
 struct http_client_t {
