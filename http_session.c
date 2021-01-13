@@ -1686,15 +1686,13 @@ static void cache_client_header_read_done(struct cache_client_t *cache_client)
 		LOG(LOG_DEBUG, "%s %s body_low=%"PRId64" body_high=%"PRId64"\n",
 				http_session->epoll_thread->name, string_buf(&http_request->url), http_session->body_low, http_session->body_high);
 	}
-	LOG(LOG_DEBUG, "%s %s body_pos=%"PRId64" body_expect_size=%"PRId64"\n",
-			http_session->epoll_thread->name, string_buf(&http_request->url), cache_client->body_pos, cache_client->body_expect_size);
 	http_session_cache_read(http_session);
 }
 
 static void http_session_cache_read(struct http_session_t *http_session)
 {
 	//struct http_request_t *http_request = &http_session->http_request;
-	//struct http_client_t *http_client = http_session->http_client;
+	struct http_client_t *http_client = http_session->http_client;
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
@@ -1706,16 +1704,26 @@ static void http_session_cache_read(struct http_session_t *http_session)
 	int hit_size = 0;
 	buffer = http_session_body_alloc(http_session);
 	check_size = MAX_LOOP * PAGE_SIZE - buffer->len;
-	if (check_size > cache_client->body_expect_size) {
-		check_size = cache_client->body_expect_size;
+	if (check_size + http_session->body_high > http_client->body_offset_expect) {
+		check_size = http_client->body_offset_expect - http_session->body_high;
 	}
-	while (hit_size < check_size) {
-		byte_pos = (http_session->body_high + hit_size) / cache_file->bitmap_byte_size;
-		bit_pos = (http_session->body_high + hit_size) / cache_file->bitmap_bit_size;
-		if ((cache_file->bitmap[byte_pos] & (1 << (bit_pos & 0x7))) == 0) {
-			break;
+	if (cache_file->bitmap) {
+		assert(cache_file->http_reply->content_length > 0);
+		while (hit_size < check_size) {
+			byte_pos = (http_session->body_high + hit_size) / cache_file->bitmap_byte_size;
+			bit_pos = (http_session->body_high + hit_size) / cache_file->bitmap_bit_size;
+			if ((cache_file->bitmap[byte_pos] & (1 << (bit_pos & 0x7))) == 0) {
+				break;
+			}
+			hit_size = (bit_pos + 1) * cache_file->bitmap_bit_size - http_session->body_high;
 		}
-		hit_size = (bit_pos + 1) * cache_file->bitmap_bit_size - http_session->body_high;
+		if (hit_size + http_session->body_high > cache_file->http_reply->content_length) {
+			hit_size = cache_file->http_reply->content_length - http_session->body_high;
+		}
+	}
+	cache_client->buffer_size = MIN(hit_size, buffer->size - buffer->len);
+	cache_client->buffer_array[0] = buffer;
+	while (cache_client->buffer_size < hit_size) {
 	}
 	LOG(LOG_DEBUG, "check_size=%d hit_size=%d\n", check_size, hit_size);
 	cache_client_do_read(cache_client);
@@ -1947,7 +1955,7 @@ static void cache_file_create_exec(struct aio_t *aio)
 	assert(cache->file_number < 0);
 	cache->file_number = 1;
 	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache->file_number);
-	aio->fd = aio->return_ret = open(cache_file->path, O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO);
+	aio->fd = aio->return_ret = open(cache_file->path, O_RDWR|O_CREAT|O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
 	aio->return_errno = errno;
 	if (aio->fd <= 0) {
 		return;
@@ -2062,7 +2070,6 @@ static void cache_client_dump_header(struct cache_client_t *cache_client)
 static void cache_client_file_close(struct cache_client_t *cache_client)
 {
 	LOG(LOG_DEBUG, "%s fd=%d start close\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
-	assert(cache_client->aio.fd > 0);
 	aio_summit(&cache_client->aio, cache_client_file_close_exec, cache_client_file_close_done);
 }
 
@@ -2139,11 +2146,10 @@ static void cache_client_bitmap_update(struct cache_client_t *cache_client)
 	while (cache_client->body_pos - cache_client->bitmap_pos >= cache_file->bitmap_bit_size) {
 		bit_pos = cache_client->bitmap_pos / cache_file->bitmap_bit_size;
 		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
-		cache_file->bitmap[byte_pos] |= 1 << (bit_pos & 0x7);
+		cache_file->bitmap[byte_pos] |= (1 << (bit_pos & 0x7));
 		cache_client->bitmap_pos += cache_file->bitmap_bit_size;
 	}
-	if (cache_client->body_pos == cache_file->http_reply->content_length &&
-			cache_client->bitmap_pos < cache_file->http_reply->content_length) {
+	if (cache_client->body_pos == cache_file->http_reply->content_length) {
 		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
 		cache_file->bitmap[byte_pos] = 0xff;
 		cache_client->bitmap_pos = cache_file->http_reply->content_length;

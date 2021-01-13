@@ -81,7 +81,6 @@ struct cache_client_t {
 	int64_t body_pos;
 	size_t bitmap_pos;
 
-	int64_t body_expect_size;
 	struct aio_t aio;
 };
 
