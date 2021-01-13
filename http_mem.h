@@ -13,6 +13,7 @@
 #define http_free free
 #endif
 
+#define is_power_of_2(x)	((x) != 0 && (((x) & ((x) - 1)) == 0))
 struct string_t {
 	size_t size;
 	size_t len;
@@ -25,19 +26,11 @@ struct buffer_t {
 	int ref;
 	void *buf;
 };
-
-struct buffer_node_t {
-	struct list_head_t node;
-	void *buffer;
-};
-
-struct buffer_node_pool_t {
-	size_t size;
-	struct list_head_t list;
-};
-
-struct buffer_list_t {
-	struct list_head_t list;
+struct fifo_t {
+	void **data;
+	unsigned int size;
+	unsigned int in;
+	unsigned int out;
 };
 
 void mem_pools_init();
@@ -66,12 +59,12 @@ void buffer_unref(struct buffer_t *buffer);
 int buffer_full(struct buffer_t *buffer);
 int buffer_empty(struct buffer_t *buffer);
 
-void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t size);
-size_t buffer_node_pool_size(struct buffer_node_pool_t *buffer_node_pool);
-int buffer_node_pool_empty(struct buffer_node_pool_t *buffer_node_pool);
-struct buffer_node_t* buffer_node_pool_head(struct buffer_node_pool_t *buffer_node_pool);
-struct buffer_node_t* buffer_node_pool_tail(struct buffer_node_pool_t *buffer_node_pool);
-void buffer_node_pool_push(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t *buffer_node);
-void buffer_node_pool_pop(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t **buffer_node);
-void buffer_node_pool_clean(struct buffer_node_pool_t *buffer_node_pool);
+void fifo_init(struct fifo_t *fifo, unsigned int size);
+unsigned int fifo_size(struct fifo_t *fifo);
+unsigned int fifo_len(struct fifo_t *fifo);
+void fifo_push_tail(struct fifo_t *fifo, void *buffer);
+void fifo_pop_head(struct fifo_t *fifo, void **buffer);
+void *fifo_head(struct fifo_t *fifo);
+void *fifo_tail(struct fifo_t *fifo);
+void fifo_clean(struct fifo_t *fifo);
 #endif

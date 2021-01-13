@@ -73,8 +73,7 @@ struct cache_client_t {
 	};
 	void *http_session;
 	int bitmap_flush;
-	struct buffer_node_pool_t body_free_pool;
-	struct buffer_node_pool_t body_data_pool;
+	struct fifo_t body_fifo;
 	struct buffer_t *buffer_array[MAX_LOOP + 1];
 	int buffer_size;
 
@@ -120,16 +119,14 @@ struct http_session_t {
 	struct http_request_t http_request;
 	int64_t post_low;
 	int64_t post_high;
-	struct buffer_node_pool_t post_free_pool;
-	struct buffer_node_pool_t post_data_pool;
+	struct fifo_t post_fifo;
 	struct http_client_t *http_client;
 	struct cache_client_t *cache_client;
 	struct http_server_t *http_server;
 	int abort;
 	int64_t body_low;
 	int64_t body_high;
-	struct buffer_node_pool_t body_free_pool;
-	struct buffer_node_pool_t body_data_pool;
+	struct fifo_t body_fifo;
 	struct epoll_thread_t *epoll_thread;
 };
 

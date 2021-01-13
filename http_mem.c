@@ -866,70 +866,60 @@ int buffer_empty(struct buffer_t *buffer)
 	return buffer->len == 0;
 }
 
-void buffer_node_pool_init(struct buffer_node_pool_t *buffer_node_pool, size_t size)
+void fifo_init(struct fifo_t *fifo, unsigned int size)
 {
-	size_t i = 0;
-	struct buffer_node_t *buffer_node = NULL;
-	INIT_LIST_HEAD(&buffer_node_pool->list);
-	for (i = 0; i < size; i++) {
-		buffer_node = http_malloc(sizeof(struct buffer_node_t));
-		list_add_tail(&buffer_node->node, &buffer_node_pool->list);
+	assert(is_power_of_2(size));
+	fifo->data = http_malloc(size * sizeof(void*));
+	fifo->size = size;
+	fifo->in = 0;
+	fifo->out = 0;
+}
+
+unsigned int fifo_size(struct fifo_t *fifo)
+{
+	return fifo->size;
+}
+
+unsigned int fifo_len(struct fifo_t *fifo)
+{
+	return fifo->in - fifo->out;
+}
+
+void fifo_push_tail(struct fifo_t *fifo, void *buffer)
+{
+	assert(fifo_len(fifo) < fifo->size);
+	fifo->data[fifo->in & (fifo->size - 1)] = buffer;
+	fifo->in++;
+}
+
+void fifo_pop_head(struct fifo_t *fifo, void **buffer)
+{
+	if (fifo_len(fifo) > 0) {
+		*buffer = fifo->data[fifo->out & (fifo->size - 1)];
+		fifo->out++;
+	} else {
+		*buffer = NULL;
 	}
-	buffer_node_pool->size = size;
 }
 
-size_t buffer_node_pool_size(struct buffer_node_pool_t *buffer_node_pool)
+void *fifo_head(struct fifo_t *fifo)
 {
-	return buffer_node_pool->size;
-}
-
-int buffer_node_pool_empty(struct buffer_node_pool_t *buffer_node_pool)
-{
-	return buffer_node_pool->size == 0;
-}
-
-struct buffer_node_t* buffer_node_pool_head(struct buffer_node_pool_t *buffer_node_pool)
-{
-	if (buffer_node_pool->size > 0) {
-		return d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
+	if (fifo_len(fifo) > 0) {
+		return fifo->data[fifo->out & (fifo->size - 1)];
 	} else {
 		return NULL;
 	}
 }
 
-struct buffer_node_t* buffer_node_pool_tail(struct buffer_node_pool_t *buffer_node_pool)
+void *fifo_tail(struct fifo_t *fifo)
 {
-	if (buffer_node_pool->size > 0) {
-		return d_list_tail(&buffer_node_pool->list, struct buffer_node_t, node);
+	if (fifo_len(fifo) > 0) {
+		return fifo->data[(fifo->in - 1) & (fifo->size - 1)];
 	} else {
 		return NULL;
 	}
 }
-
-void buffer_node_pool_push(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t *buffer_node)
+void fifo_clean(struct fifo_t *fifo)
 {
-	list_add_tail(&buffer_node->node, &buffer_node_pool->list);
-	buffer_node_pool->size++;
-}
-
-void buffer_node_pool_pop(struct buffer_node_pool_t *buffer_node_pool, struct buffer_node_t **buffer_node)
-{
-	if (buffer_node_pool->size > 0) {
-		*buffer_node = d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
-		list_del(&(*buffer_node)->node);
-		buffer_node_pool->size--;
-	} else {
-		*buffer_node = NULL;
-	}
-}
-
-void buffer_node_pool_clean(struct buffer_node_pool_t *buffer_node_pool)
-{
-	struct buffer_node_t *buffer_node = NULL;
-	while (buffer_node_pool->size > 0) {
-		buffer_node = d_list_head(&buffer_node_pool->list, struct buffer_node_t, node);
-		list_del(&buffer_node->node);
-		buffer_node_pool->size--;
-		http_free(buffer_node);
-	}
+	http_free(fifo->data);
 }
