@@ -77,24 +77,23 @@ struct cache_client_t {
 	struct buffer_node_pool_t body_data_pool;
 	struct buffer_t *buffer_array[MAX_LOOP + 1];
 	int buffer_size;
-	struct aio_t aio;
 
-	//char *header;
-	//size_t header_size;
 	int64_t body_pos;
 	size_t bitmap_pos;
+
+	int64_t body_expect_size;
+	struct aio_t aio;
 };
 
 struct http_client_t {
 	struct connection_t *connection;
 	http_parser parser;
-	int64_t post_offset;
 	int keep_alive;
 	struct string_t reply_header; 
 	int64_t reply_header_send_size; 
 	int64_t body_offset;
-	int64_t body_send_size;
-	int64_t body_expect_size;
+	int64_t body_offset_current;
+	int64_t body_offset_expect;
 	struct continuation_t continuation;
 };
 
@@ -104,9 +103,7 @@ struct http_server_t {
 	struct http_range_t *range;
 	struct string_t request_header;
 	int64_t request_header_send_size;
-	int64_t post_offset;
-	int64_t post_send_size;
-	int64_t post_expect_size;
+	int64_t post_offset_current;
 	http_parser parser;
 	int chunked;
 	struct http_chunked_t http_chunked;
@@ -114,7 +111,8 @@ struct http_server_t {
 	uint16_t port;
 	int keep_alive;
 	int64_t body_offset;
-	int64_t body_expect_size;
+	//int64_t body_offset_current; equal http_sesssion->body_high
+	int64_t body_offset_expect;
 	struct continuation_t continuation;
 };
 
