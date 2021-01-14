@@ -61,9 +61,10 @@ static int http_request_cacheable(struct http_request_t *http_request);
 static int http_reply_cacheable(struct http_reply_t *http_reply);
 static void http_session_lookup_cache(struct http_session_t *http_session);
 static void cache_client_header_read_done(struct cache_client_t *cache_client);
-static void http_session_cache_read(struct http_session_t *http_session);
-
+size_t cache_client_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end);
 static int http_session_cache_header_write(struct cache_client_t *cache_client, struct http_reply_t *http_reply);
+static void cache_client_body_read_exec(struct aio_t *aio);
+static void cache_client_body_read_done(struct aio_t *aio);
 static void cache_client_create(struct http_session_t *http_session);
 static void cache_client_free(struct cache_client_t *cache_client);
 static void cache_client_lock(struct cache_client_t *cache_client, struct cache_t *cache);
@@ -79,7 +80,6 @@ static void cache_client_resume(struct aio_t *aio);
 static void cache_client_file_close(struct cache_client_t *cache_client);
 static void cache_client_file_close_exec(struct aio_t *aio);
 static void cache_client_file_close_done(struct aio_t *aio);
-static void cache_client_do_read(struct cache_client_t *cache_client);
 static void cache_client_dump_header(struct cache_client_t *cache_client);
 static void cache_client_body_append(struct cache_client_t *cache_client, struct buffer_t *buffer);
 static void cache_client_body_append_end(struct cache_client_t *cache_client);
@@ -1550,7 +1550,7 @@ static void http_reply_free(struct http_reply_t *http_reply)
 
 static int http_request_cacheable(struct http_request_t *http_request)
 {
-	return 0;
+	return 1;
 }
 
 static int http_reply_cacheable(struct http_reply_t *http_reply)
@@ -1626,47 +1626,129 @@ static void cache_client_header_read_done(struct cache_client_t *cache_client)
 		LOG(LOG_DEBUG, "%s %s body_low=%"PRId64" body_high=%"PRId64"\n",
 				http_session->epoll_thread->name, string_buf(&http_request->url), http_session->body_low, http_session->body_high);
 	}
-	http_session_cache_read(http_session);
+	if (cache_client_body_read(cache_client, http_session->body_high, http_client->body_offset_expect) == 0) {
+		// miss
+	}
 }
 
-static void http_session_cache_read(struct http_session_t *http_session)
+size_t cache_client_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end)
 {
-	//struct http_request_t *http_request = &http_session->http_request;
-	struct http_client_t *http_client = http_session->http_client;
-	struct cache_client_t *cache_client = http_session->cache_client;
+	struct http_session_t *http_session = cache_client->http_session;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	//	struct buffer_node_t *buffer_node = NULL;
 	struct buffer_t *buffer = NULL;
+	size_t buffer_size = 0;
 	size_t byte_pos = 0;
 	size_t bit_pos = 0;
-	int check_size = 0;
-	int hit_size = 0;
-	//buffer = http_session_body_alloc(http_session);
-	check_size = MAX_LOOP * PAGE_SIZE - buffer->len;
-	if (check_size + http_session->body_high > http_client->body_offset_expect) {
-		check_size = http_client->body_offset_expect - http_session->body_high;
+	size_t check_size = MAX_LOOP * PAGE_SIZE;
+	size_t hit_size = 0;
+	int i = 0;
+	if (check_size + start > end) {
+		check_size = end - start;
 	}
 	if (cache_file->bitmap) {
 		assert(cache_file->http_reply->content_length > 0);
 		while (hit_size < check_size) {
-			byte_pos = (http_session->body_high + hit_size) / cache_file->bitmap_byte_size;
-			bit_pos = (http_session->body_high + hit_size) / cache_file->bitmap_bit_size;
+			byte_pos = (start + hit_size) / cache_file->bitmap_byte_size;
+			bit_pos = (start + hit_size) / cache_file->bitmap_bit_size;
 			if ((cache_file->bitmap[byte_pos] & (1 << (bit_pos & 0x7))) == 0) {
 				break;
 			}
-			hit_size = (bit_pos + 1) * cache_file->bitmap_bit_size - http_session->body_high;
+			hit_size = (bit_pos + 1) * cache_file->bitmap_bit_size - start;
 		}
-		if (hit_size + http_session->body_high > cache_file->http_reply->content_length) {
-			hit_size = cache_file->http_reply->content_length - http_session->body_high;
+		if (hit_size + start > cache_file->http_reply->content_length) {
+			hit_size = cache_file->http_reply->content_length - start;
+		}
+	} else {
+		hit_size = check_size;
+	}
+	buffer = fifo_tail(&http_session->body_fifo);
+	if (buffer && !buffer_full(buffer)) {
+		cache_client->iovec[i].buffer = buffer_ref(buffer);
+		cache_client->iovec[i].buf = buffer->buf + buffer->len;
+		cache_client->iovec[i].buf_size = MIN(hit_size, buffer->size - buffer->len);
+		cache_client->iovec[i].buf_len = 0;
+		buffer_size += cache_client->iovec[i].buf_size;
+		i++;
+	}
+	while (buffer_size < hit_size && buffer_size < check_size && fifo_len(&http_session->body_fifo) < fifo_size(&http_session->body_fifo) && i < MAX_LOOP) {
+		buffer = buffer_alloc(PAGE_SIZE);
+		fifo_push_tail(&http_session->body_fifo, buffer);
+		cache_client->iovec[i].buffer = buffer_ref(buffer);
+		cache_client->iovec[i].buf = buffer->buf;
+		cache_client->iovec[i].buf_size = MIN(hit_size - buffer_size, buffer->size);
+		cache_client->iovec[i].buf_len = 0;
+		buffer_size += cache_client->iovec[i].buf_size;
+		i++;
+	}
+	cache_client->iovec_len = i;
+	LOG(LOG_DEBUG, "%s %s %s fd=%d check_size=%d hit_size=%d buffer_size=%d\n", 
+			cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, check_size, hit_size, buffer_size);
+	if (buffer_size > 0) {
+		cache_client->aio.return_ret = 0;
+		cache_client->aio.return_errno = 0;
+		cache_client->aio.offset = http_session->body_high + cache_file->header_size;;
+		aio_summit(&cache_client->aio, cache_client_body_read_exec, cache_client_body_read_done);
+	}
+	return buffer_size;
+}
+
+static void cache_client_body_read_exec(struct aio_t *aio)
+{
+	struct cache_client_t *cache_client = aio->callback_data;
+	ssize_t nread = 0;
+	int i = 0;
+	for (i = 0; i < cache_client->iovec_len; i++) {
+		nread = posix_pread(aio->fd, cache_client->iovec[i].buf, cache_client->iovec[i].buf_size, aio->offset);
+		if (nread > 0) {
+			cache_client->iovec[i].buf_len = nread;
+			aio->offset += nread;
+		}
+		if (nread < cache_client->iovec[i].buf_size) {
+			aio->return_ret = -1;
+			aio->return_errno = errno;
+			break;
 		}
 	}
-	cache_client->buffer_size = MIN(hit_size, buffer->size - buffer->len);
-	cache_client->buffer_array[0] = buffer;
-	while (cache_client->buffer_size < hit_size) {
+}
+
+static void cache_client_body_read_done(struct aio_t *aio)
+{
+	struct cache_client_t *cache_client = aio->callback_data;
+	struct cache_t *cache = cache_client->cache;
+	struct cache_file_t *cache_file = cache->cache_file;
+	struct http_session_t *http_session = cache_client->http_session;
+	struct http_client_t *http_client = NULL;
+	size_t buffer_size = 0;
+	size_t nread = 0;
+	int i = 0;
+	for (i = 0; i < cache_client->iovec_len; i++) {
+		buffer_size += cache_client->iovec[i].buf_size;
+		nread += cache_client->iovec[i].buf_len;
+		cache_client->iovec[i].buffer->len += cache_client->iovec[i].buf_len;
+		buffer_unref(cache_client->iovec[i].buffer);
 	}
-	LOG(LOG_DEBUG, "check_size=%d hit_size=%d\n", check_size, hit_size);
-	cache_client_do_read(cache_client);
+	if (aio->return_ret == 0) {
+		LOG(LOG_DEBUG, "%s %s %s fd=%d buffer_size=%d nread=%d\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, buffer_size, nread);
+		assert(nread == buffer_size);
+	} else {
+		LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d nread=%d error:%s\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buffer_size, nread, strerror(aio->return_errno));
+		cache_client_unlock(cache_client, 1);
+	}
+	if (http_session) {
+		http_session->body_high += nread;
+		http_client_write_resume(http_session);
+		http_client = http_session->http_client;
+		if (http_client &&
+			http_session->body_high < http_session->http_client->body_offset_expect &&
+			fifo_len(&http_session->body_fifo) <= fifo_len(&http_session->body_fifo) / 2) {
+			cache_client_body_read(cache_client, http_session->body_high, http_session->http_client->body_offset_expect);
+		}
+	} else {
+		cache_client_unlock(cache_client, 0);
+	}
 }
 
 static int http_session_cache_header_write(struct cache_client_t *cache_client, struct http_reply_t *http_reply)
@@ -1970,17 +2052,6 @@ static void cache_client_resume(struct aio_t *aio)
 	}
 }
 
-static void cache_client_do_read(struct cache_client_t *cache_client)
-{
-	struct cache_t *cache = cache_client->cache;
-	struct cache_file_t *cache_file = cache->cache_file;
-	assert(!aio_busy(&cache_client->aio));
-	assert(cache_client->aio.fd > 0);
-	cache_client->aio.return_ret = 0;
-	cache_client->aio.return_errno = 0;
-	LOG(LOG_DEBUG, "%s %s %s fd=%d start read\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
-}
-
 static void cache_client_dump_header(struct cache_client_t *cache_client)
 {
 	struct cache_t *cache = cache_client->cache;
@@ -2093,24 +2164,28 @@ static void cache_client_do_write(struct cache_client_t *cache_client)
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	struct buffer_t *buffer = NULL;
+	size_t buffer_size = 0;
 	int i = 0;
 	assert(!aio_busy(&cache_client->aio));
 	assert(cache_client->aio.fd > 0);
 	cache_client->aio.return_ret = 0;
 	cache_client->aio.return_errno = 0;
-	if (fifo_len(&cache_client->body_fifo) > 0) {
-		cache_client->aio.offset = cache_client->body_pos + cache_file->header_size;
-		cache_client->buffer_size = 0;
-		for (i = 0; i < MAX_LOOP; i++) {
-			fifo_pop_head(&cache_client->body_fifo, (void **)&buffer);
-			if (buffer == NULL) {
-				break;
-			}
-			cache_client->buffer_array[i] = buffer;
-			cache_client->buffer_size += buffer->len;
+	while (fifo_len(&cache_client->body_fifo) > 0 && i < MAX_LOOP) {
+		fifo_pop_head(&cache_client->body_fifo, (void **)&buffer);
+		cache_client->iovec[i].buffer = buffer;
+		cache_client->iovec[i].buf = buffer->buf;
+		cache_client->iovec[i].buf_size = buffer->len;
+		cache_client->iovec[i].buf_len = 0;
+		buffer_size += cache_client->iovec[i].buf_size;
+		i++;
+	}
+	cache_client->iovec_len = i;
+	if (cache_client->iovec_len > 0) {
+		if (cache_client->http_session) {
+			http_server_read_resume(cache_client->http_session);
 		}
-		cache_client->buffer_array[i] = NULL;
-		LOG(LOG_DEBUG, "%s %s %s fd=%d body=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->buffer_size);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d buffer_size=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, buffer_size);
+		cache_client->aio.offset = cache_client->body_pos + cache_file->header_size;
 		aio_summit(&cache_client->aio, cache_client_body_write_exec, cache_client_body_write_done);
 	} else if (cache_client->bitmap_flush && cache_file->bitmap) {
 		cache_client->bitmap_flush = 0;
@@ -2127,21 +2202,20 @@ static void cache_client_do_write(struct cache_client_t *cache_client)
 static void cache_client_body_write_exec(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
-	struct buffer_t *buffer = NULL;
-	int64_t offset = aio->offset;
 	ssize_t nwrite = 0;
 	int i = 0;
-	while ((buffer = cache_client->buffer_array[i++])) {
-		nwrite = posix_pwrite(aio->fd, buffer->buf, buffer->len, offset);
+	for (i = 0; i < cache_client->iovec_len; i++) {
+		nwrite = posix_pwrite(aio->fd, cache_client->iovec[i].buf, cache_client->iovec[i].buf_size, aio->offset);
 		if (nwrite > 0) {
-			aio->return_ret += nwrite;
-			offset += nwrite;
+			cache_client->iovec[i].buf_len = nwrite;
+			aio->offset += nwrite;
 		}
-		if (nwrite < buffer->len) {
+		if (nwrite < cache_client->iovec[i].buf_size) {
+			aio->return_ret = -1;
+			aio->return_errno = errno;
 			break;
 		}
 	}
-	aio->return_errno = errno;
 }
 
 static void cache_client_body_write_done(struct aio_t *aio)
@@ -2149,30 +2223,26 @@ static void cache_client_body_write_done(struct aio_t *aio)
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	struct buffer_t *buffer = NULL;
-	struct http_session_t *http_session = cache_client->http_session;
-	int nwrite = aio->return_ret;
+	size_t buffer_size = 0;
+	size_t nwrite = 0;
 	int i = 0;
-	while ((buffer = cache_client->buffer_array[i++])) {
-		buffer_unref(buffer);
+	for (i = 0; i < cache_client->iovec_len; i++) {
+		buffer_size += cache_client->iovec[i].buf_size;
+		nwrite += cache_client->iovec[i].buf_len;
+		buffer_unref(cache_client->iovec[i].buffer);
 	}
-	if (http_session) {
-		http_server_read_resume(http_session);
-	}
-	if (nwrite > 0) {
-		cache_client->body_pos += nwrite;
+	cache_client->body_pos += nwrite;
+	if (aio->return_ret == 0) {
+		LOG(LOG_DEBUG, "%s %s %s fd=%d buffer_size=%d nwrite=%d\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buffer_size, nwrite);
+		assert(nwrite == buffer_size);
 		if (cache_file->bitmap) {
 			cache_client_bitmap_update(cache_client);
 		}
-		LOG(LOG_DEBUG, "%s %s %s fd=%d nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite);
-		if (cache_client->buffer_size > nwrite) {
-			LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d > nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_client->buffer_size, nwrite);
-			cache_client_unlock(cache_client, 1);
-		} else {
-			cache_client_do_write(cache_client);
-		}
+		cache_client_do_write(cache_client);
 	} else {
-		LOG(LOG_ERROR, "%s %s %s fd=%d nwrite=%d error:%s\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, nwrite, strerror(aio->return_errno));
+		LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d nwrite=%d error:%s\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buffer_size, nwrite, strerror(aio->return_errno));
 		cache_client_unlock(cache_client, 1);
 	}
 }

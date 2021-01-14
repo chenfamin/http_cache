@@ -74,8 +74,8 @@ struct cache_client_t {
 	void *http_session;
 	int bitmap_flush;
 	struct fifo_t body_fifo;
-	struct buffer_t *buffer_array[MAX_LOOP + 1];
-	int buffer_size;
+	struct buffer_iovec_t iovec[MAX_LOOP + 1];
+	int iovec_len;
 
 	int64_t body_pos;
 	size_t bitmap_pos;
