@@ -1599,6 +1599,23 @@ static void http_session_lookup_cache(struct http_session_t *http_session)
 	}
 }
 
+static void http_session_body_read(struct http_session_t *http_session)
+{
+	struct http_request_t *http_request = &http_session->http_request;
+	struct cache_client_t *cache_client = http_session->cache_client;
+	struct cache_t *cache = NULL;
+	struct cache_file_t *cache_file = NULL;
+	if (cache_client) {
+		cache = cache_client->cache;
+		cache_file = cache->cache_file;
+		if (cache_file == NULL) {
+			cache->cache_file = cache_file = cache_file_alloc();
+		}
+	} else {
+		http_server_create(http_session, http_request->range);
+	}
+}
+
 static void cache_client_header_read_done(struct cache_client_t *cache_client)
 {
 	struct http_session_t *http_session = cache_client->http_session;
@@ -1718,7 +1735,6 @@ static void cache_client_body_read_done(struct aio_t *aio)
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	struct http_session_t *http_session = cache_client->http_session;
-	struct http_client_t *http_client = NULL;
 	size_t buffer_size = 0;
 	size_t nread = 0;
 	int i = 0;
@@ -1736,17 +1752,12 @@ static void cache_client_body_read_done(struct aio_t *aio)
 		LOG(LOG_ERROR, "%s %s %s fd=%d buffer_size=%d nread=%d error:%s\n",
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buffer_size, nread, strerror(aio->return_errno));
 		cache_client_unlock(cache_client, 1);
+		cache_client = NULL;
 	}
 	if (http_session) {
 		http_session->body_high += nread;
 		http_client_write_resume(http_session);
-		http_client = http_session->http_client;
-		if (http_client &&
-			http_session->body_high < http_session->http_client->body_offset_expect &&
-			fifo_len(&http_session->body_fifo) <= fifo_len(&http_session->body_fifo) / 2) {
-			cache_client_body_read(cache_client, http_session->body_high, http_session->http_client->body_offset_expect);
-		}
-	} else {
+	} else if (cache_client) {
 		cache_client_unlock(cache_client, 0);
 	}
 }
@@ -1870,6 +1881,8 @@ static void cache_client_file_open(struct cache_client_t *cache_client, struct h
 {
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
+	cache_client->aio.return_ret = 0;
+	cache_client->aio.return_errno = 0;
 	if (cache_file == NULL) {
 		cache->cache_file = cache_file = cache_file_alloc();
 		if (http_reply) { // create file and write header
@@ -1908,9 +1921,10 @@ static void cache_file_open_exec(struct aio_t *aio)
 	ssize_t nread = 0;
 	size_t nparse = 0;
 	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache->file_number);
-	aio->fd = aio->return_ret = open(cache_file->path, O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO);
-	aio->return_errno = errno;
+	aio->fd = open(cache_file->path, O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO);
 	if (aio->fd <= 0) {
+		aio->return_ret = -1;
+		aio->return_errno = errno;
 		return;
 	}
 	assert(cache_file->http_reply == NULL);
@@ -1921,6 +1935,8 @@ static void cache_file_open_exec(struct aio_t *aio)
 		nread = posix_pread(aio->fd, buf, sizeof(buf), aio->offset);
 		if (nread <= 0) {
 			http_reply_free(http_reply);
+			aio->return_ret = -1;
+			aio->return_errno = errno;
 			close(aio->fd);
 			aio->fd = -1;
 			return;
@@ -1929,6 +1945,8 @@ static void cache_file_open_exec(struct aio_t *aio)
 		nparse = http_parser_execute(&parser, &reply_parser_settings, buf, nread);
 		if (nparse < nread && http_reply->parse_state < PARSER_HEADER_DONE) {
 			http_reply_free(http_reply);
+			aio->return_ret = -1;
+			aio->return_errno = errno;
 			close(aio->fd);
 			aio->fd = -1;
 			return;
@@ -1972,9 +1990,10 @@ static void cache_file_create_exec(struct aio_t *aio)
 	assert(cache->file_number < 0);
 	cache->file_number = 1;
 	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache->file_number);
-	aio->fd = aio->return_ret = open(cache_file->path, O_RDWR|O_CREAT|O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
-	aio->return_errno = errno;
+	aio->fd = open(cache_file->path, O_RDWR|O_CREAT|O_TRUNC, S_IRWXU | S_IRWXG | S_IRWXO);
 	if (aio->fd <= 0) {
+		aio->return_ret = -1;
+		aio->return_errno = errno;
 		return;
 	}
 	assert(cache_file->http_reply != NULL);
@@ -1998,6 +2017,8 @@ static void cache_file_create_exec(struct aio_t *aio)
 		aio->offset += nwrite;
 	}
 	if (nwrite < cache_file->header_size) {
+		aio->return_ret = -1;
+		aio->return_errno = errno;
 		close(aio->fd);
 		aio->fd = -1;
 	}
@@ -2010,7 +2031,8 @@ static void cache_client_file_open_done(struct aio_t *aio)
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	struct aio_t *aio_delay;
-	if (aio->fd > 0) {
+	if (aio->return_ret == 0) {
+		assert(aio->fd > 0);
 		LOG(LOG_DEBUG, "%s %s %s fd=%d ok\n", aio->epoll_thread->name, cache->url, cache_file->path, aio->fd);
 		cache_file->fd = aio->fd;
 		cache_client_dump_header(cache_client);
@@ -2021,12 +2043,15 @@ static void cache_client_file_open_done(struct aio_t *aio)
 		cache_file_free(cache_file);
 		cache->cache_file = NULL;
 	}
-	cache_client_resume(aio);
 	while (!list_empty(&cache_file->delay_list)) {
 		aio_delay = d_list_head(&cache_file->delay_list, struct aio_t, node);
 		list_del(&aio_delay->node);
+		aio_delay->return_ret = aio->return_ret;
+		aio_delay->return_errno = aio->return_errno;
+		aio_delay->fd = aio->fd;
 		cache_client_resume(aio_delay);
 	}
+	cache_client_resume(aio);
 }
 
 static void cache_client_resume(struct aio_t *aio)
