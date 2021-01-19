@@ -83,6 +83,7 @@ struct cache_client_t {
 
 	struct aio_t aio;
 	int delay;
+	struct http_parser parser;
 };
 
 struct http_client_t {
