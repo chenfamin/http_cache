@@ -27,13 +27,6 @@ struct buffer_t {
 	void *buf;
 };
 
-struct buffer_iovec_t {
-	struct buffer_t *buffer;
-	char *buf;
-	size_t buf_size;
-	size_t buf_len;
-};
-
 struct fifo_t {
 	void **data;
 	unsigned int size;

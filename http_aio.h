@@ -10,10 +10,20 @@ enum aio_status_t {
 	AIO_STATUS_SUMMIT,
 };
 
+struct aio_iovec_t {
+	void *buffer;
+	void *buf;
+	size_t buf_size;
+	size_t buf_len;
+};
+
 struct aio_t {
 	struct list_head_t node;
 	enum aio_status_t status;
 	int fd;
+	int flags;
+	struct aio_iovec_t iovec[MAX_LOOP + 1];
+	int iovec_len;
 	int64_t offset;
 	int return_ret;
 	int return_errno;
@@ -39,11 +49,9 @@ void aio_exec(struct aio_t *aio);
 void aio_done(struct aio_t *aio);
 int aio_busy(struct aio_t *aio);
 
-void aio_open(struct aio_t *aio);
-void aio_pwritev(struct aio_t *aio);
+void aio_open(struct aio_t *aio, const char *pathname, int flags, mode_t mode);
 void aio_close(struct aio_t *aio);
-
-ssize_t posix_pread(int fd, void *buf, size_t count, off_t offset);
-ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset);
+void aio_readv(struct aio_t *aio);
+void aio_writev(struct aio_t *aio);
 
 #endif

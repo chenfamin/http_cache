@@ -43,6 +43,10 @@ struct cache_file_t {
 	size_t bitmap_size;
 	char path[256];
 	int fd;
+	struct {
+		int busy:1;
+		int error:1;
+	} flags;
 };
 
 struct cache_t {
@@ -59,14 +63,13 @@ struct cache_t {
 	} flags;
 };
 
-enum cache_client_type_t {
-	CACHE_CLIENT_NONE,
-	CACHE_CLIENT_READ,
-	CACHE_CLIENT_WRITE,
+enum {
+	CACHE_DELAY_NONE,
+	CACHE_DELAY_READ,
+	CACHE_DELAY_WRITE,
 };
 
 struct cache_client_t {
-	enum cache_client_type_t type;
 	union {
 		struct cache_t *cache;
 		int64_t file_number;// only for delete file
@@ -74,13 +77,12 @@ struct cache_client_t {
 	void *http_session;
 	int bitmap_flush;
 	struct fifo_t body_fifo;
-	struct buffer_iovec_t iovec[MAX_LOOP + 1];
-	int iovec_len;
 
 	int64_t body_pos;
 	size_t bitmap_pos;
 
 	struct aio_t aio;
+	int delay;
 };
 
 struct http_client_t {
@@ -108,6 +110,7 @@ struct http_server_t {
 	struct dns_info_t dns_info;
 	uint16_t port;
 	int keep_alive;
+	struct http_reply_t *http_reply;
 	int64_t body_offset;
 	//int64_t body_offset_current; equal http_sesssion->body_high
 	int64_t body_offset_expect;

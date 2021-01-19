@@ -63,23 +63,64 @@ void aio_done(struct aio_t *aio)
 	aio->done(aio);
 }
 
-void aio_close(struct aio_t *aio)
-{
-	aio->return_ret = close(aio->fd);
-	aio->return_errno = errno;
-}
-
 int aio_busy(struct aio_t *aio)
 {
 	return aio->status > AIO_STATUS_DONE;
 }
 
-ssize_t posix_pread(int fd, void *buf, size_t count, off_t offset)
+void aio_open(struct aio_t *aio, const char *pathname, int flags, mode_t mode)
 {
-	return pread(fd, buf, count, offset);
+	aio->fd = open(pathname, flags, mode);
+	if (aio->fd < 0) {
+		aio->return_ret = -1;
+		aio->return_errno = errno;
+	}
 }
 
-ssize_t posix_pwrite(int fd, const void *buf, size_t count, off_t offset)
+void aio_close(struct aio_t *aio)
 {
-	return pwrite(fd, buf, count, offset);
+	close(aio->fd);
+	if (close(aio->fd)) {
+		aio->return_ret = -1;
+		aio->return_errno = errno;
+	}
+	aio->fd = -1;
+}
+
+void aio_readv(struct aio_t *aio)
+{
+	ssize_t nread = 0;
+	int i = 0;
+	for (i = 0; i < aio->iovec_len; i++) {
+		nread = pread(aio->fd, aio->iovec[i].buf, aio->iovec[i].buf_size, aio->offset);
+		if (nread > 0) {
+			aio->iovec[i].buf_len = nread;
+			aio->offset += nread;
+		} else {
+			aio->return_ret = -1;
+		}
+		if (nread < aio->iovec[i].buf_size) {
+			aio->return_errno = errno;
+			break;
+		}
+	}
+}
+
+void aio_writev(struct aio_t *aio)
+{
+	ssize_t nwrite = 0;
+	int i = 0;
+	for (i = 0; i < aio->iovec_len; i++) {
+		nwrite = pwrite(aio->fd, aio->iovec[i].buf, aio->iovec[i].buf_size, aio->offset);
+		if (nwrite > 0) {
+			aio->iovec[i].buf_len = nwrite;
+			aio->offset += nwrite;
+		} else {
+			aio->return_ret = -1;
+		}
+		if (nwrite < aio->iovec[i].buf_size) {
+			aio->return_errno = errno;
+			break;
+		}
+	}
 }
