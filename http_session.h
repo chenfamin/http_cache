@@ -36,6 +36,7 @@ struct cache_table_t {
 struct cache_file_t {
 	struct list_head_t delay_list;
 	struct http_reply_t *http_reply;
+	char  *header_buf;
 	size_t header_size;
 	size_t bitmap_bit_size;
 	size_t bitmap_byte_size;

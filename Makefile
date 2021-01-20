@@ -1,7 +1,7 @@
 TARGET = http
 
 GPROF_CFLAGS=
-CFLAGS += $(GPROF_CFLAGS) -Wall -g -DMEM_POOL=0
+CFLAGS += $(GPROF_CFLAGS) -Wall -g -O0 -DMEM_POOL=0
 LDFLAGS += -lpthread
 #LDFLAGS += -static
 

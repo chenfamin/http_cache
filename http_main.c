@@ -306,6 +306,7 @@ int main()
 	aio_list_free();
 	dns_cache_table_free();
 	cache_table_free();
+	LOG(LOG_INFO, "cache_table_free done:\n");
 #if MEM_POOL
 	char buf[4096];
 	mem_pools_report(buf, sizeof(buf));

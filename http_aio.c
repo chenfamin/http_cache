@@ -38,6 +38,8 @@ void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)
 {
 	assert(aio->epoll_thread != NULL);
 	assert(aio->status == AIO_STATUS_DONE);
+	aio->return_ret = 0;
+	aio->return_errno = 0;
 	aio->exec = exec;
 	aio->done = done;
 	pthread_mutex_lock(&aio_list.mutex);
