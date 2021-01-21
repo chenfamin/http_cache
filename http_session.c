@@ -8,94 +8,6 @@
 
 static struct cache_table_t cache_table;
 
-static int socket_listen(const char *host, uint16_t port, int family);;
-static int request_on_message_begin(http_parser *hp);;
-static int request_on_url(http_parser *hp, const char *at, size_t length);;
-static int request_on_header_field(http_parser *hp, const char *at, size_t length);;
-static int request_on_header_value(http_parser *hp, const char *at, size_t length);;
-static int request_on_headers_complete(http_parser *hp);;
-static int request_on_body(http_parser *hp, const char *at, size_t length);;
-static int request_on_message_complete(http_parser *hp);;
-static int reply_on_message_begin(http_parser *hp);;
-static int reply_on_status(http_parser *hp, const char *at, size_t length);; 
-static int reply_on_header_field(http_parser *hp, const char *at, size_t length);; 
-static int reply_on_header_value(http_parser *hp, const char *at, size_t length);; 
-static int reply_on_headers_complete(http_parser *hp);; 
-static int reply_on_body(http_parser *hp, const char *at, size_t length);;
-static int reply_on_message_complete(http_parser *hp);; 
-static void http_session_accept(struct connection_t *connection);;
-static void http_session_close(struct http_session_t *http_session);;
-static void http_client_create(struct http_session_t *http_session, struct connection_t *connection);;
-static void http_client_check_close(struct http_session_t *http_session, int error_code);;
-static void http_client_close(struct http_session_t *http_session, int error_code);;
-static void http_client_post_append(struct http_session_t *http_session, const char *buf, size_t len);;
-static void http_client_read_resume(struct http_session_t *http_session);;
-static void http_client_header_read(struct connection_t *connection);;
-static void http_client_body_read(struct connection_t *connection);;
-static int http_client_header_process(struct http_session_t *http_session);;
-static void http_client_dispatch(struct http_session_t *http_session);;
-static void http_client_dump_header(struct http_session_t *http_session);;
-static void http_client_build_reply(struct http_session_t *http_session, struct http_reply_t *http_reply);;
-static void http_client_build_error_reply(struct http_session_t *http_session, int status_code);;
-static void http_client_header_write(struct connection_t *connection);;
-static void http_client_body_write(struct connection_t *connection);;
-static void http_server_create(struct http_session_t *http_session, struct http_range_t *range);;
-static void http_server_close(struct http_session_t *http_session, int error_code);;
-static void http_server_connect(void *data);;
-static void http_server_connect_check(struct connection_t *connection);;
-static void http_server_connect_done(struct http_session_t *http_session, int error);;
-static void http_server_write_resume(struct http_session_t *http_session);;
-static void http_server_header_write(struct connection_t *connection);;
-static void http_server_body_write(struct connection_t *connection);;
-static void http_session_body_append(struct http_session_t *http_session, const char *buf, size_t len);;
-static void http_server_header_read(struct connection_t *connection);;
-static void http_server_body_read_resume(struct http_session_t *http_session);;
-static void http_server_body_read(struct connection_t *connection);;
-static int http_server_header_process(struct http_session_t *http_session);;
-static int http_server_parse_chunk(struct http_session_t *http_session, const char *buf, size_t len);; 
-static void http_server_dump_header(struct http_session_t *http_session);;
-static struct http_reply_t* http_reply_alloc();;
-static void http_reply_copy(struct http_reply_t *dest, struct http_reply_t *src);;
-static void http_reply_free(struct http_reply_t *http_reply);;
-static int http_request_cacheable(struct http_request_t *http_request);;
-static int http_reply_cacheable(struct http_reply_t *http_reply);;
-static void http_session_cache_lookup(struct http_session_t *http_session);;
-static void http_session_cache_hit(struct http_session_t *http_session);;
-static void http_session_body_read(struct http_session_t *http_session);;
-static void http_session_body_write(struct http_session_t *http_session);;
-static void cache_client_dump_header(struct cache_client_t *cache_client);;
-static void cache_client_header_build(struct cache_client_t *cache_client, struct http_reply_t *http_reply);;
-static void cache_client_header_write(struct cache_client_t *cache_client, struct http_reply_t *http_reply);;
-static void cache_client_body_append(struct cache_client_t *cache_client, struct buffer_t *buffer);;
-static void cache_client_body_append_end(struct cache_client_t *cache_client);;
-static void cache_file_bitmap_update(struct cache_client_t *cache_client);;
-static void cache_file_open_aio(struct aio_t *aio);;
-static void cache_file_open_done(struct aio_t *aio);;
-static void cache_client_resume(struct cache_client_t *cache_client);;
-static void cache_client_do_write(struct cache_client_t *cache_client);;
-static void cache_file_header_write_done(struct aio_t *aio);;
-static void cache_client_body_write_done(struct aio_t *aio);;
-static void cache_file_bitmap_write_done(struct aio_t *aio);;
-static void cache_file_header_read_done(struct aio_t *aio);;
-static void cache_file_bitmap_read_done(struct aio_t *aio);;
-static int cache_file_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end);;
-static void cache_file_body_read_done(struct aio_t *aio);;
-static void cache_file_close_aio(struct aio_t *aio);;
-static void cache_file_close_done(struct aio_t *aio);;
-static struct cache_client_t *cache_client_alloc();;
-static void cache_client_free(struct cache_client_t *cache_client);;
-static void cache_client_lock(struct cache_client_t *cache_client, struct cache_t *cache);;
-static void cache_client_unlock(struct cache_client_t *cache_client, int del);;
-static struct cache_file_t* cache_file_alloc();;
-static void cache_file_free(struct cache_file_t *cache_file);;
-static void cache_file_bitmap_init(struct cache_file_t *cache_file, int64_t content_length, size_t block_size);;
-static struct cache_t* cache_alloc(const char *key);;
-static void cache_free(struct cache_t *cache);;
-static int cache_table_lock();;
-static int cache_table_unlock();;
-static struct cache_t* cache_table_lookup(const void *key);;
-static int cache_table_insert(struct cache_t *cache);;
-static int cache_table_erase(struct cache_t *cache);;
 static int socket_listen(const char *host, uint16_t port, int family);
 static int request_on_message_begin(http_parser *hp);
 static int request_on_url(http_parser *hp, const char *at, size_t length);
@@ -151,7 +63,6 @@ static void http_session_cache_lookup(struct http_session_t *http_session);
 static void http_session_cache_hit(struct http_session_t *http_session);
 static void http_session_body_read(struct http_session_t *http_session);
 static void http_session_body_write(struct http_session_t *http_session);
-static void cache_client_lock(struct cache_client_t *cache_client, struct cache_t *cache);
 static void cache_client_unlock(struct cache_client_t *cache_client, int del);
 static void cache_client_dump_header(struct cache_client_t *cache_client);
 static void cache_client_header_build(struct cache_client_t *cache_client, struct http_reply_t *http_reply);
@@ -176,8 +87,9 @@ static struct cache_client_t *cache_client_alloc();
 static void cache_client_free(struct cache_client_t *cache_client);
 static struct cache_file_t* cache_file_alloc();
 static void cache_file_free(struct cache_file_t *cache_file);
+static void cache_file_path_init(struct cache_file_t *cache_file);
 static void cache_file_bitmap_init(struct cache_file_t *cache_file, int64_t content_length, size_t block_size);
-static struct cache_t* cache_alloc(const char *key);
+static struct cache_t* cache_alloc();
 static void cache_free(struct cache_t *cache);
 static int cache_table_lock();
 static int cache_table_unlock();
@@ -503,6 +415,7 @@ static void http_session_close(struct http_session_t *http_session)
 	struct buffer_t *buffer = NULL;
 	assert(http_session->http_client == NULL);
 	assert(http_session->http_server == NULL);
+	LOG(LOG_INFO, "%s %s\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 	list_del(&http_session->node);
 	if (cache_client) {
 		if (aio_busy(&cache_client->aio)) {
@@ -525,7 +438,6 @@ static void http_session_close(struct http_session_t *http_session)
 		buffer_unref(buffer);
 	}
 	fifo_clean(&http_session->body_fifo);
-	LOG(LOG_INFO, "%s %s\n", http_session->epoll_thread->name, string_buf(&http_request->url));
 	http_header_clean(&http_request->header);
 	if (http_request->range) {
 		http_free(http_request->range);
@@ -1641,7 +1553,6 @@ static void http_session_cache_lookup(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
 	struct cache_client_t *cache_client = NULL;
-	struct aio_t *aio = NULL;
 	struct cache_t *cache = NULL;
 	struct cache_file_t *cache_file = NULL;
 	if (http_request_cacheable(http_request) == 0) {
@@ -1650,53 +1561,61 @@ static void http_session_cache_lookup(struct http_session_t *http_session)
 	}
 	http_session->cache_client = cache_client = cache_client_alloc();
 	cache_client->http_session = http_session;
-	aio = &cache_client->aio;
-	aio->epoll_thread = http_session->epoll_thread;
+	cache_client->aio.epoll_thread = http_session->epoll_thread;
 
 	cache_table_lock();
 	cache = cache_table_lookup(string_buf(&http_request->url));
 	if (cache == NULL) {
-		cache = cache_alloc(string_buf(&http_request->url));
-		if (cache_table_insert(cache)) {
-			assert(0);
-		}
+		cache = cache_alloc();
+		cache->key = http_strdup(string_buf(&http_request->url));
+		cache->url = http_strdup(string_buf(&http_request->url));
+		cache_table_insert(cache);
 	}
-	cache_client_lock(http_session->cache_client, cache);
+	if (cache->lock++ == 0) {
+		assert(cache->epoll_thread == NULL);
+		cache->epoll_thread = cache_client->aio.epoll_thread;
+	} else {
+		assert(cache->epoll_thread != NULL);
+	}
+	cache_client->cache = cache;
 	cache_table_unlock();
 
-	if (aio->epoll_thread != cache->epoll_thread) {
+	if (cache_client->aio.epoll_thread != cache->epoll_thread) {
 		http_client_dispatch(http_session);
 		return;
 	}
-	if (cache->file_number < 0) {
+	if (cache->file_number == 0) {
 		http_session_body_read(http_session);
 		return;
 	}
 	cache_file = cache->cache_file;
 	if (cache_file == NULL) {
 		cache->cache_file = cache_file = cache_file_alloc();
-		LOG(LOG_DEBUG, "%s %s cache file open start\n", cache_client->aio.epoll_thread->name, cache->url);
+		cache_file->file_number = cache->file_number;
+		cache_file_path_init(cache_file);
+		LOG(LOG_DEBUG, "%s %s %s open\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path);
 		http_parser_init(&cache_client->parser, HTTP_RESPONSE);
 		cache_client->parser.data = cache_file->http_reply;
 		cache_file->header_buf = http_malloc(PAGE_SIZE);
-		aio->iovec[0].buffer = &cache->file_number;
-		aio->iovec[0].buf = cache_file->header_buf;
-		aio->iovec[0].buf_size = PAGE_SIZE;
-		aio->iovec[0].buf_len = 0;
-		aio->iovec_len = 1;
+		cache_client->aio.iovec[0].buffer = cache_file;
+		cache_client->aio.iovec[0].buf = cache_file->header_buf;
+		cache_client->aio.iovec[0].buf_size = PAGE_SIZE;
+		cache_client->aio.iovec[0].buf_len = 0;
+		cache_client->aio.iovec_len = 1;
 		cache_client->delay = CACHE_DELAY_READ;
-		cache_file->flags.busy = 1;
 		aio_summit(&cache_client->aio, cache_file_open_aio, cache_file_open_done);
-	} else if (cache_file->flags.busy) {
-		LOG(LOG_DEBUG, "%s %s cache file wait for open\n", cache_client->aio.epoll_thread->name, cache->url);
+	} else if (cache_file->fd == 0) {
+		LOG(LOG_DEBUG, "%s %s %s open wait\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path);
 		cache_client->delay = CACHE_DELAY_READ;
 		cache_client->aio.status = AIO_STATUS_SUMMIT;
 		list_add_tail(&cache_client->aio.node, &cache_file->delay_list);
 	} else if (cache_file->fd > 0) {
-		aio->fd = cache_file->fd;
+		LOG(LOG_DEBUG, "%s %s %s open done\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path);
+		cache_client->aio.fd = cache_file->fd;
 		http_session_cache_hit(http_session);
 	} else {
-		aio->fd = -1;
+		LOG(LOG_DEBUG, "%s %s %s open fail\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path);
+		cache_client->aio.fd = -1;
 		cache_client_unlock(cache_client, 1);
 		http_session_body_read(http_session);
 	}
@@ -1708,7 +1627,7 @@ static void http_session_cache_hit(struct http_session_t *http_session)
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	if (cache_file->flags.error) {
+	if (cache_file->abort) {
 		cache_client_unlock(cache_client, 1);
 	} else if (http_client) {
 		if (string_strlen(&http_client->reply_header) == 0) {
@@ -1780,44 +1699,42 @@ static void http_session_body_write(struct http_session_t *http_session)
 	}	
 }
 
-static void cache_client_lock(struct cache_client_t *cache_client, struct cache_t *cache)
-{
-	cache->lock++;
-	if (cache->epoll_thread == NULL) {
-		cache->epoll_thread = cache_client->aio.epoll_thread;
-	}
-	cache_client->cache = cache;
-}
-
 static void cache_client_unlock(struct cache_client_t *cache_client, int del)
 {
 	struct http_session_t *http_session = cache_client->http_session;
 	struct cache_t *cache = cache_client->cache;
-	struct cache_file_t *cache_file = NULL;
+	struct cache_file_t *cache_file = cache->cache_file;
 	LOG(LOG_DEBUG, "%s %s\n", cache_client->aio.epoll_thread->name, cache->url);
 	if (http_session) {
 		http_session->cache_client = NULL;
 	}
 	cache_client->cache = NULL;
+	cache_client->aio.fd = -1;
 	cache_table_lock();
-	if (del && cache->flags.del == 0) {
+	if (del && cache->key) {
 		cache_table_erase(cache);
-		cache->flags.del = 1;
 	}
-	if (--cache->lock == 0) {
-		cache->epoll_thread = NULL;
-		cache_file = cache->cache_file;
-		if (cache->flags.del && cache->file_number > 0) {
-			cache_client->file_number = cache->file_number;
-		}
+	if (--cache->lock > 0) {
+		cache_table_unlock();
+		cache_client_free(cache_client);
+		return;
+	}
+	cache->epoll_thread = NULL;
+	cache->cache_file = NULL;
+	cache_table_unlock();
+	if (cache->key == NULL) {
 		cache_free(cache);
 	}
-	cache_table_unlock();
-	if (cache_file) {
-		assert(cache_client->aio.fd == cache_file->fd);
-		cache_file_free(cache_file);
+	if (cache_file->fd > 0 && cache_file->file_number > 0) {
 	}
-	if (cache_client->aio.fd > 0 || cache_client->file_number > 0) {
+	if (cache_file) {
+		assert(cache_file->file_number == cache->file_number);
+		cache_client->aio.fd = cache_file->fd;
+		cache_client->aio.iovec[0].buffer = cache_file;
+		cache_client->aio.iovec[0].buf = NULL;
+		cache_client->aio.iovec[0].buf_size = 0;
+		cache_client->aio.iovec[0].buf_len = 0;
+		cache_client->aio.iovec_len = 1;
 		LOG(LOG_DEBUG, "%s fd=%d start close\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
 		aio_summit(&cache_client->aio, cache_file_close_aio, cache_file_close_done);
 	} else {
@@ -1890,19 +1807,18 @@ static void cache_client_header_write(struct cache_client_t *cache_client, struc
 	}
 	cache_client->body_pos = http_server->body_offset;
 	if (cache_file == NULL) {
-		assert(cache->file_number < 0);
+		assert(cache->file_number == 0);
 		cache->cache_file = cache_file = cache_file_alloc();
 		LOG(LOG_DEBUG, "%s %s cache file create start\n", cache_client->aio.epoll_thread->name, cache->url);
 		cache_client_header_build(cache_client, http_reply);
-		aio->iovec[0].buffer = &cache->file_number;
+		aio->iovec[0].buffer = cache_file;
 		aio->iovec[0].buf = cache_file->header_buf;
 		aio->iovec[0].buf_size = cache_file->header_size;
 		aio->iovec[0].buf_len = 0;
 		aio->iovec_len = 1;
 		cache_client->delay = CACHE_DELAY_WRITE;
-		cache_file->flags.busy = 1;
 		aio_summit(&cache_client->aio, cache_file_open_aio, cache_file_open_done);
-	} else if (cache_file->flags.busy) {
+	} else if (cache_file->fd == 0) {
 		LOG(LOG_DEBUG, "%s %s cache file wait for create\n", cache_client->aio.epoll_thread->name, cache->url);
 		cache_client->delay = CACHE_DELAY_WRITE;
 		cache_client->aio.status = AIO_STATUS_SUMMIT;
@@ -1969,15 +1885,14 @@ static void cache_file_bitmap_update(struct cache_client_t *cache_client)
 
 static void cache_file_open_aio(struct aio_t *aio)
 {
-	int64_t *file_number = aio->iovec[0].buffer;
-	char path[64];
+	struct cache_file_t *cache_file = aio->iovec[0].buffer;
 	aio->flags = O_RDWR;
-	if (*file_number < 0) {
-		*file_number = 1;
+	if (cache_file->file_number == 0) {
+		cache_file->file_number = 1;
+		cache_file_path_init(cache_file);
 		aio->flags |= O_CREAT|O_TRUNC;
 	}
-	snprintf(path, sizeof(path), "/tmp/cache_%"PRId64".dat", *file_number);
-	aio_open(aio, path, aio->flags, S_IRWXU | S_IRWXG | S_IRWXO);
+	aio_open(aio, cache_file->path, aio->flags, S_IRWXU | S_IRWXG | S_IRWXO);
 	if (aio->return_ret) {
 		return;
 	}
@@ -1994,13 +1909,11 @@ static void cache_file_open_done(struct aio_t *aio)
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache->file_number);
-	if (aio->fd > 0) {
-		cache_file->fd = aio->fd;
-	}
 	if (aio->flags == O_RDWR) {
 		cache_file_header_read_done(aio);
 	} else {
+		assert(cache->file_number == 0);
+		cache->file_number = cache_file->file_number;
 		cache_file_header_write_done(aio);
 	}
 }
@@ -2010,17 +1923,18 @@ static void cache_client_resume(struct cache_client_t *cache_client)
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	struct aio_t *aio = NULL;
-	assert(cache_file->flags.busy);
-	cache_file->flags.busy = 0;
+	assert(cache_file->fd == 0);
+	cache_file->fd = cache_client->aio.fd;
 	list_add(&cache_client->aio.node, &cache_file->delay_list);
 	while (!list_empty(&cache_file->delay_list)) {
 		aio = d_list_head(&cache_file->delay_list, struct aio_t, node);
 		list_del(&aio->node);
+		aio->fd = cache_file->fd;
 		aio->status = AIO_STATUS_DONE;
 		cache_client = aio->callback_data;
 		if (cache_client->delay == CACHE_DELAY_READ) {
 			if (cache_client->http_session == NULL) {
-				if (cache_file->flags.error) {
+				if (cache_file->abort) {
 					cache_client_unlock(cache_client, 1);
 				} else {
 					cache_client_unlock(cache_client, 0);
@@ -2029,7 +1943,7 @@ static void cache_client_resume(struct cache_client_t *cache_client)
 				http_session_cache_hit(cache_client->http_session);
 			}
 		} else if (cache_client->delay == CACHE_DELAY_WRITE) {
-			if (cache_file->flags.error) {
+			if (cache_file->abort) {
 				cache_client_unlock(cache_client, 1);
 			} else {
 				cache_client_do_write(cache_client);
@@ -2091,7 +2005,7 @@ static void cache_file_header_write_done(struct aio_t *aio)
 	if (buf_len < buf_size) {
 		LOG(LOG_ERROR, "%s %s %s fd=%d buf_size=%d buf_len=%d\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
-		cache_file->flags.error = 1;
+		cache_file->abort = 1;
 	} else {
 		LOG(LOG_DEBUG, "%s %s %s fd=%d buf_size=%d buf_len=%d\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
@@ -2144,7 +2058,6 @@ static void cache_file_bitmap_write_done(struct aio_t *aio)
 	}
 }
 
-
 static void cache_file_header_read_done(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
@@ -2163,7 +2076,7 @@ static void cache_file_header_read_done(struct aio_t *aio)
 			if (nparse < buf_len) {
 				LOG(LOG_ERROR, "%s %s %s header_size=%d nparse=%d\n", 
 						cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_len, nparse);
-				cache_file->flags.error = 1;
+				cache_file->abort = 1;
 				cache_client_resume(cache_client);
 			} else {
 				aio->iovec[0].buffer = NULL;
@@ -2202,7 +2115,7 @@ static void cache_file_header_read_done(struct aio_t *aio)
 	} else {
 		LOG(LOG_ERROR, "%s %s %s buf_size=%d buf_len=%d\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
-		cache_file->flags.error = 1;
+		cache_file->abort = 1;
 		cache_client_resume(cache_client);
 	}	
 }
@@ -2218,14 +2131,13 @@ static void cache_file_bitmap_read_done(struct aio_t *aio)
 	if (buf_len < buf_size) {
 		LOG(LOG_ERROR, "%s %s %s fd=%d buf_size=%d buf_len=%d\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
-		cache_file->flags.error = 1;
+		cache_file->abort = 1;
 	} else {
 		LOG(LOG_ERROR, "%s %s %s fd=%d bitmap_size=%d\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_len);
 	}
 	cache_client_resume(cache_client);
 }
-
 
 static int cache_file_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end)
 {
@@ -2306,7 +2218,7 @@ static void cache_file_body_read_done(struct aio_t *aio)
 		buffer->len += aio->iovec[i].buf_len;
 		buffer_unref(buffer);
 	}
-	if (aio->return_ret == 0) {
+	if (nread == buffer_size) {
 		LOG(LOG_DEBUG, "%s %s %s fd=%d buffer_size=%d nread=%d\n",
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, buffer_size, nread);
 		assert(nread == buffer_size);
@@ -2326,15 +2238,13 @@ static void cache_file_body_read_done(struct aio_t *aio)
 
 static void cache_file_close_aio(struct aio_t *aio)
 {
-	struct cache_client_t *cache_client = aio->callback_data;
-	char path[256];
+	struct cache_file_t *cache_file = aio->iovec[0].buffer;
 	if (aio->fd > 0) {
 		aio->return_ret = close(aio->fd);
 		aio->return_errno = errno;
 	}
-	if (cache_client->file_number > 0) {
-		snprintf(path, sizeof(path), "/tmp/cache_%"PRId64".dat", cache_client->file_number);
-		aio->return_ret = unlink(path);
+	if (cache_file) {
+		aio->return_ret = unlink(cache_file->path);
 		aio->return_errno = errno;
 	}
 }
@@ -2342,12 +2252,17 @@ static void cache_file_close_aio(struct aio_t *aio)
 static void cache_file_close_done(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
-	if (aio->return_ret == 0) {
+	struct cache_file_t *cache_file = aio->iovec[0].buffer;
+	if (aio->fd > 0 && aio->return_ret == 0) {
 		LOG(LOG_DEBUG, "%s fd=%d close ok\n", aio->epoll_thread->name, aio->fd);
 	} else {
 		LOG(LOG_ERROR, "%s fd=%d close error:%s\n", aio->epoll_thread->name, aio->fd, strerror(aio->return_errno));
 	}
 	cache_client_free(cache_client);
+	if (cache_file) {
+		LOG(LOG_DEBUG, "%s %s fd=%d unlink\n", aio->epoll_thread->name, cache_file->path, aio->fd);
+		cache_file_free(cache_file);
+	}
 }
 
 static struct cache_client_t *cache_client_alloc()
@@ -2393,6 +2308,12 @@ static void cache_file_free(struct cache_file_t *cache_file)
 	http_free(cache_file);
 }
 
+static void cache_file_path_init(struct cache_file_t *cache_file)
+{
+	assert(cache_file->file_number > 0);
+	snprintf(cache_file->path, sizeof(cache_file->path), "/tmp/cache_%"PRId64".dat", cache_file->file_number);
+}
+
 static void cache_file_bitmap_init(struct cache_file_t *cache_file, int64_t content_length, size_t block_size)
 {
 	cache_file->bitmap_bit_size = block_size;
@@ -2407,20 +2328,19 @@ static void cache_file_bitmap_init(struct cache_file_t *cache_file, int64_t cont
 }
 
 
-static struct cache_t* cache_alloc(const char *key)
+static struct cache_t* cache_alloc()
 {
 	struct cache_t *cache = NULL;
 	cache = http_malloc(sizeof(struct cache_t));
 	memset(cache, 0, sizeof(struct cache_t));
-	cache->key = http_strdup(key);
-	cache->url = http_strdup(key);
-	cache->file_number = -1;
 	return cache;
 }
 
 static void cache_free(struct cache_t *cache)
 {
-	http_free(cache->key);
+	assert(cache->key == NULL);
+	assert(cache->epoll_thread == NULL);
+	assert(cache->cache_file == NULL);
 	http_free(cache->url);
 	http_free(cache);
 }
@@ -2491,7 +2411,7 @@ static int cache_table_insert(struct cache_t *cache)
 		else if (cmp > 0)
 			p = &(*p)->rb_right;
 		else
-			return -1;
+			assert(0);
 	}   
 	rb_link_node(&cache->rb_node, parent, p); 
 	rb_insert_color(&cache->rb_node, &cache_table.rb_root);
@@ -2503,6 +2423,8 @@ static int cache_table_erase(struct cache_t *cache)
 {
 	rb_erase(&cache->rb_node, &cache_table.rb_root);
 	cache_table.count--;
+	http_free(cache->key);
+	cache->key = NULL;
 	return 0;
 }
 

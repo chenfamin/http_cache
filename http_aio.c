@@ -81,12 +81,10 @@ void aio_open(struct aio_t *aio, const char *pathname, int flags, mode_t mode)
 
 void aio_close(struct aio_t *aio)
 {
-	close(aio->fd);
 	if (close(aio->fd)) {
 		aio->return_ret = -1;
 		aio->return_errno = errno;
 	}
-	aio->fd = -1;
 }
 
 void aio_readv(struct aio_t *aio)

@@ -43,25 +43,20 @@ struct cache_file_t {
 	unsigned char *bitmap;
 	size_t bitmap_size;
 	char path[256];
+	int64_t file_number;
 	int fd;
-	struct {
-		int busy:1;
-		int error:1;
-	} flags;
+	int abort;
 };
 
 struct cache_t {
 	char *key;
+	char *url;
 	struct rb_node rb_node;
 	struct epoll_thread_t *epoll_thread;
 	int lock;
 
-	char *url;
 	int64_t file_number;
 	struct cache_file_t *cache_file;
-	struct {
-		int del:1;
-	} flags;
 };
 
 enum {
@@ -71,10 +66,7 @@ enum {
 };
 
 struct cache_client_t {
-	union {
-		struct cache_t *cache;
-		int64_t file_number;// only for delete file
-	};
+	struct cache_t *cache;
 	void *http_session;
 	int bitmap_flush;
 	struct fifo_t body_fifo;
