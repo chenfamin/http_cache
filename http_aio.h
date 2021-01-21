@@ -25,8 +25,8 @@ struct aio_t {
 	struct aio_iovec_t iovec[MAX_LOOP + 1];
 	int iovec_len;
 	int64_t offset;
-	int return_ret;
-	int return_errno;
+	int error;
+	char *error_str;
 	void (*exec)(struct aio_t *aio);
 	void (*done)(struct aio_t *aio);
 	void *callback_data;
@@ -50,8 +50,9 @@ void aio_done(struct aio_t *aio);
 int aio_busy(struct aio_t *aio);
 
 void aio_open(struct aio_t *aio, const char *pathname, int flags, mode_t mode);
-void aio_close(struct aio_t *aio);
 void aio_readv(struct aio_t *aio);
 void aio_writev(struct aio_t *aio);
+void aio_close(struct aio_t *aio);
+void aio_unlink(struct aio_t *aio, const char *pathname);
 
 #endif

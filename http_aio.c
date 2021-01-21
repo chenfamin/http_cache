@@ -38,8 +38,8 @@ void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)
 {
 	assert(aio->epoll_thread != NULL);
 	assert(aio->status == AIO_STATUS_DONE);
-	aio->return_ret = 0;
-	aio->return_errno = 0;
+	aio->error = 0;
+	aio->error_str = "";
 	aio->exec = exec;
 	aio->done = done;
 	pthread_mutex_lock(&aio_list.mutex);
@@ -74,16 +74,8 @@ void aio_open(struct aio_t *aio, const char *pathname, int flags, mode_t mode)
 {
 	aio->fd = open(pathname, flags, mode);
 	if (aio->fd < 0) {
-		aio->return_ret = -1;
-		aio->return_errno = errno;
-	}
-}
-
-void aio_close(struct aio_t *aio)
-{
-	if (close(aio->fd)) {
-		aio->return_ret = -1;
-		aio->return_errno = errno;
+		aio->error = -1;
+		aio->error_str = strerror(errno);
 	}
 }
 
@@ -97,10 +89,10 @@ void aio_readv(struct aio_t *aio)
 			aio->iovec[i].buf_len = nread;
 			aio->offset += nread;
 		} else {
-			aio->return_ret = -1;
+			aio->error = -1;
 		}
 		if (nread < aio->iovec[i].buf_size) {
-			aio->return_errno = errno;
+			aio->error_str = strerror(errno);
 			break;
 		}
 	}
@@ -116,11 +108,27 @@ void aio_writev(struct aio_t *aio)
 			aio->iovec[i].buf_len = nwrite;
 			aio->offset += nwrite;
 		} else {
-			aio->return_ret = -1;
+			aio->error = -1;
 		}
 		if (nwrite < aio->iovec[i].buf_size) {
-			aio->return_errno = errno;
+			aio->error_str = strerror(errno);
 			break;
 		}
+	}
+}
+
+void aio_close(struct aio_t *aio)
+{
+	if (close(aio->fd)) {
+		aio->error = -1;
+		aio->error_str = strerror(errno);
+	}
+}
+
+void aio_unlink(struct aio_t *aio, const char *pathname)
+{
+	if (unlink(pathname)) {
+		aio->error = -1;
+		aio->error_str = strerror(errno);
 	}
 }

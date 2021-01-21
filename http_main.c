@@ -197,6 +197,7 @@ void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
 {
 	if (!epoll_thread->signal) {
 		epoll_thread->signal = 1;
+		LOG(LOG_DEBUG, "signal\n");
 		write(epoll_thread->pipe_write_fd, "1", 1);
 	}
 }
