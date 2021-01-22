@@ -3,6 +3,7 @@
 #include "http_aio.h"
 #include "http_connection.h"
 #include "http_dns.h"
+#include "listen_session.h"
 #include "http_session.h"
 
 static int epoll_threads_num = 2;
@@ -43,10 +44,10 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 		LOG(LOG_ERROR, "%s pipe error:%s\n", epoll_thread->name, strerror(errno));
 		exit(-1);
 	} 
-	INIT_LIST_HEAD(&epoll_thread->listen_list);
+	INIT_LIST_HEAD(&epoll_thread->listen_session_list);
+	INIT_LIST_HEAD(&epoll_thread->http_session_list);
 	INIT_LIST_HEAD(&epoll_thread->ready_list);
 	INIT_LIST_HEAD(&epoll_thread->free_list);
-	INIT_LIST_HEAD(&epoll_thread->http_session_list);
 	INIT_LIST_HEAD(&epoll_thread->done_list);
 	pthread_mutex_init(&epoll_thread->done_mutex, NULL);
 	socket_non_block(event_pipe[0]);
@@ -64,23 +65,23 @@ void epoll_thread_init(struct epoll_thread_t *epoll_thread)
 
 void epoll_thread_clean(struct epoll_thread_t *epoll_thread)
 {
-	struct connection_t *connection = NULL;
+	struct listen_session_t *listen_session = NULL;
 	LOG(LOG_INFO, "%s epoll_fd=%d clean\n", epoll_thread->name, epoll_thread->epoll_fd);
 	if (epoll_thread->dns_session) {
 		dns_session_close(epoll_thread->dns_session);
 		epoll_thread->dns_session = NULL;
 	}
-	while (!list_empty(&epoll_thread->listen_list)) {
-		connection = d_list_head(&epoll_thread->listen_list, struct connection_t, node);
-		list_del(&connection->node);
-		connection_close(connection, CONNECTION_FREE_NOW);
+	while (!list_empty(&epoll_thread->listen_session_list)) {
+		listen_session = d_list_head(&epoll_thread->listen_session_list, struct listen_session_t, node);
+		listen_session_close(listen_session);
 	}
 	connection_close(epoll_thread->pipe_read_connection, CONNECTION_FREE_NOW);
 	close(epoll_thread->pipe_write_fd);
 	close(epoll_thread->epoll_fd);
+	assert(list_empty(&epoll_thread->listen_session_list));
+	assert(list_empty(&epoll_thread->http_session_list));
 	assert(list_empty(&epoll_thread->ready_list));
 	assert(list_empty(&epoll_thread->free_list));
-	assert(list_empty(&epoll_thread->http_session_list));
 	assert(list_empty(&epoll_thread->done_list));
 	pthread_mutex_destroy(&epoll_thread->done_mutex);
 }
@@ -163,9 +164,14 @@ static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread)
 	}
 }
 
-struct epoll_thread_t* epoll_thread_select()
+struct epoll_thread_t* epoll_thread_select(struct epoll_thread_t *epoll_thread)
 {
-	return epoll_threads + 0;
+	static unsigned int i = 0;
+	epoll_thread = &epoll_threads[i];
+	i = (i + 1) % epoll_threads_num;
+
+	epoll_thread = &epoll_threads[0];
+	return epoll_thread;
 }
 
 static void epoll_thread_pipe_read(struct connection_t *connection)
@@ -244,6 +250,7 @@ void* aio_thread_loop(void *arg)
 int main()
 {
 	int i = 0;
+	int fd;
 	mem_pools_init();
 	log_file_open();
 	if (signal(SIGINT, sig_int) == SIG_ERR) {
@@ -252,6 +259,7 @@ int main()
 	if (signal(SIGPIPE, sig_pipe) == SIG_ERR) {
 		LOG(LOG_ERROR, "regist SIGPIPE error\n");
 	}
+
 	aio_list_create();
 	dns_cache_table_create();
 	cache_table_create();
@@ -270,7 +278,14 @@ int main()
 		aio_thread_init(&aio_threads[i]);
 	}
 
-	http_session_listen("0.0.0.0", 8888);
+	fd = socket_listen("0.0.0.0", 8888, AF_INET);
+	if (fd < 0) {
+		assert(0);
+	}
+	for (i = 0; i < epoll_threads_num; i++) {
+		listen_session_create(&epoll_threads[i], dup(fd));
+	}
+	close(fd);
 
 	for (i = 0; i < epoll_threads_num; i++) {
 		if (pthread_create(&epoll_threads[i].tid, NULL, epoll_thread_loop, &epoll_threads[i])) {

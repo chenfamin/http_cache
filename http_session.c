@@ -8,7 +8,6 @@
 
 static struct cache_table_t cache_table;
 
-static int socket_listen(const char *host, uint16_t port, int family);
 static int request_on_message_begin(http_parser *hp);
 static int request_on_url(http_parser *hp, const char *at, size_t length);
 static int request_on_header_field(http_parser *hp, const char *at, size_t length);
@@ -23,7 +22,6 @@ static int reply_on_header_value(http_parser *hp, const char *at, size_t length)
 static int reply_on_headers_complete(http_parser *hp); 
 static int reply_on_body(http_parser *hp, const char *at, size_t length);
 static int reply_on_message_complete(http_parser *hp); 
-static void http_session_accept(struct connection_t *connection);
 static void http_session_close(struct http_session_t *http_session);
 static void http_client_create(struct http_session_t *http_session, struct connection_t *connection);
 static void http_client_check_close(struct http_session_t *http_session, int error_code);
@@ -33,7 +31,6 @@ static void http_client_read_resume(struct http_session_t *http_session);
 static void http_client_header_read(struct connection_t *connection);
 static void http_client_body_read(struct connection_t *connection);
 static int http_client_header_process(struct http_session_t *http_session);
-static void http_client_dispatch(struct http_session_t *http_session);
 static void http_client_dump_header(struct http_session_t *http_session);
 static void http_client_build_reply(struct http_session_t *http_session, struct http_reply_t *http_reply);
 static void http_client_build_error_reply(struct http_session_t *http_session, int status_code);
@@ -59,6 +56,8 @@ static void http_reply_copy(struct http_reply_t *dest, struct http_reply_t *src)
 static void http_reply_free(struct http_reply_t *http_reply);
 static int http_request_cacheable(struct http_request_t *http_request);
 static int http_reply_cacheable(struct http_reply_t *http_reply);
+static void cache_client_dispatch(struct cache_client_t *cache_client);
+static void cache_client_dispatch_done(struct aio_t *aio);
 static void http_session_cache_lookup(struct http_session_t *http_session);
 static void http_session_cache_hit(struct http_session_t *http_session);
 static void http_session_body_read(struct http_session_t *http_session);
@@ -138,73 +137,6 @@ void strlow(uint8_t *dst, uint8_t *src, size_t n)
 		src++;
 		n--;
 	}   
-}
-
-const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size)
-{
-	if (addr->sa_family == AF_INET) {
-		inet_ntop(addr->sa_family, &((struct sockaddr_in *)addr)->sin_addr, str, size);
-	} else if (addr->sa_family == AF_INET6) {
-		inet_ntop(addr->sa_family, &((struct sockaddr_in6 *)addr)->sin6_addr, str, size);
-	}
-	return str;
-}
-
-static int socket_listen(const char *host, uint16_t port, int family)
-{
-	struct sockaddr addr;
-	struct in_addr sin_addr;
-	struct in6_addr sin6_addr;
-	int fd = -1;
-	int var = 1;
-	if (inet_pton(AF_INET, host, &sin_addr) > 0) {
-		((struct sockaddr_in *)&addr)->sin_family = AF_INET;
-		((struct sockaddr_in *)&addr)->sin_port = htons(port);
-		((struct sockaddr_in *)&addr)->sin_addr = sin_addr;
-	} else if (inet_pton(AF_INET6, host, &sin6_addr) > 0) {
-		((struct sockaddr_in6 *)&addr)->sin6_family = AF_INET6;
-		((struct sockaddr_in6 *)&addr)->sin6_port = htons(port);
-		((struct sockaddr_in6 *)&addr)->sin6_addr = sin6_addr;
-	} else {
-		LOG(LOG_ERROR, "%s addr error\n", host);
-		return -1;
-	}
-	fd = socket(addr.sa_family, SOCK_STREAM, IPPROTO_TCP);
-	if (fd < 0) {
-		LOG(LOG_ERROR, "socket fd=%d error:%s\n", fd, strerror(errno));
-		return -1;
-	}
-	var = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &var, sizeof(var)) == -1) {
-		LOG(LOG_ERROR, "setsockopt fd=%d error:%s\n", fd, strerror(errno));
-		close(fd);
-		return -1;
-	}
-	if (bind(fd, &addr, sizeof(addr)) != 0) {
-		LOG(LOG_ERROR, "listen fd=%d error:%s\n", fd, strerror(errno));
-		close(fd);
-		return -1;
-	}
-	if (listen(fd, 1024) != 0) {
-		LOG(LOG_ERROR, "listen fd=%d error:%s\n", fd, strerror(errno));
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
-
-int socket_non_block(int fd) 
-{
-	int flags, r;
-	while ((flags = fcntl(fd, F_GETFL, 0)) == -1 && errno == EINTR);
-	if (flags == -1) {
-		return -1; 
-	}   
-	while ((r = fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1 && errno == EINTR);
-	if (r == -1) {
-		return -1; 
-	}   
-	return 0;
 }
 
 static int request_on_message_begin(http_parser *hp)
@@ -333,67 +265,28 @@ static int reply_on_message_complete(http_parser *hp)
 	return 1;
 }
 
-void http_session_listen(const char *host, int port)
+void http_session_create(struct epoll_thread_t *epoll_thread, int fd)
 {
-	int fd = -1;
+	struct http_session_t *http_session = NULL;
 	struct connection_t *connection = NULL;
 	socklen_t addr_len = sizeof(struct sockaddr);
-	fd = socket_listen(host, port, AF_INET);
-	if (fd < 0) {
-		LOG(LOG_ERROR, "listen_socket %s:%d error:%s\n", host, port, strerror(errno));
-		return;
-	}
-	LOG(LOG_INFO, "listen %s:%d fd=%d\n", host, port, fd);
-	socket_non_block(fd);
-	connection = http_malloc(sizeof(struct connection_t));
-	memset(connection, 0, sizeof(struct connection_t));
-	connection->fd = fd;
-	getsockname(connection->fd, &connection->local_addr, &addr_len);
-	connection->epoll_thread = epoll_thread_select();
-	connection_read_enable(connection, http_session_accept);
-	list_add_tail(&connection->node, &connection->epoll_thread->listen_list);
-}
-
-static void http_session_accept(struct connection_t *connection)
-{
-	struct epoll_thread_t *epoll_thread = connection->epoll_thread;
-	struct sockaddr local_addr = connection->local_addr;
-	struct sockaddr peer_addr;
-	struct connection_t *new_connection = NULL;
-	struct http_session_t *http_session = NULL;
-	socklen_t addr_len = sizeof(struct sockaddr);
-	char ip_str[64] = {0};
-	int fd = -1;
-	fd = accept(connection->fd, (struct sockaddr*)&peer_addr, &addr_len);
-	if (fd <= 0) {
-		if (fd == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-			LOG(LOG_DEBUG, "%s fd=%d again\n", epoll_thread->name, connection->fd);
-			connection_read_done(connection);
-			connection_read_enable(connection, http_session_accept);
-		} else {
-			LOG(LOG_ERROR, "%s fd=%d accept=%d error:%s\n", epoll_thread->name, connection->fd, fd, strerror(errno));
-		}
-		return;
-	}
-	connection_read_enable(connection, http_session_accept);
-	socket_non_block(fd);
-	new_connection = http_malloc(sizeof(struct connection_t));
-	memset(new_connection, 0, sizeof(struct connection_t));
-	new_connection->local_addr = local_addr;
-	new_connection->peer_addr = peer_addr;
-	new_connection->fd = fd;
-	new_connection->epoll_thread = epoll_thread;
-	LOG(LOG_INFO, "%s accept %s fd=%d\n", epoll_thread->name, sockaddr_to_string(&new_connection->peer_addr, ip_str, sizeof(ip_str)), new_connection->fd);
-
 	http_session = http_malloc(sizeof(struct http_session_t));
 	memset(http_session, 0, sizeof(struct http_session_t));
+	http_session->epoll_thread = epoll_thread;
 	http_header_init(&http_session->http_request.header);
 	string_init_size(&http_session->http_request.url, 1024);
 	fifo_init(&http_session->post_fifo, PAGE_MAX_COUNT);
 	fifo_init(&http_session->body_fifo, PAGE_MAX_COUNT);
-	http_session->epoll_thread = epoll_thread;
 	list_add_tail(&http_session->node, &epoll_thread->http_session_list);
-	http_client_create(http_session, new_connection);
+
+	connection = http_malloc(sizeof(struct connection_t));
+	memset(connection, 0, sizeof(struct connection_t));
+	connection->fd = fd;
+	getsockname(connection->fd, &connection->local_addr, &addr_len);
+	getpeername(connection->fd, &connection->peer_addr, &addr_len);
+	connection->epoll_thread = epoll_thread;
+
+	http_client_create(http_session, connection);
 }
 
 void http_session_abort(struct http_session_t *http_session)
@@ -707,10 +600,6 @@ static int http_client_header_process(struct http_session_t *http_session)
 		}    
 	}
 	return 0;
-}
-
-static void http_client_dispatch(struct http_session_t *http_session)
-{
 }
 
 static void http_client_dump_header(struct http_session_t *http_session)
@@ -1380,6 +1269,7 @@ static int http_server_header_process(struct http_session_t *http_session)
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_client_t *http_client = http_session->http_client;
 	struct http_server_t *http_server = http_session->http_server;
+	struct cache_client_t *cache_client = http_session->cache_client;
 	struct connection_t *connection = http_server->connection;
 	struct http_reply_t *http_reply = http_server->http_reply;
 	char buf[256];
@@ -1435,12 +1325,17 @@ static int http_server_header_process(struct http_session_t *http_session)
 			http_client_build_reply(http_session, http_reply);
 			connection_write_enable(http_client->connection, http_client_header_write);
 		} else if (http_reply->status_code != 200) {
-			LOG(LOG_ERROR, "%s %s fd=%d client need abort\n%s", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
+			LOG(LOG_ERROR, "%s %s fd=%d client need abort\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
 			return -1;
 		}
 	}
-	if (http_session->cache_client) {
-		cache_client_header_write(http_session->cache_client, http_reply);
+	if (cache_client) {
+		if (http_reply_cacheable(http_reply)) {
+			cache_client_header_write(cache_client, http_reply);
+		} else {
+			LOG(LOG_DEBUG, "%s %s fd=%d reply disable cache\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
+			cache_client_close(cache_client, 1);
+		}
 	}
 	return 0;
 }
@@ -1555,12 +1450,53 @@ static int http_reply_cacheable(struct http_reply_t *http_reply)
 	}
 }
 
+static void cache_client_dispatch(struct cache_client_t *cache_client)
+{
+	struct http_session_t *http_session = cache_client->http_session;
+	struct http_request_t *http_request = &http_session->http_request;
+	struct http_client_t *http_client = http_session->http_client;
+	struct connection_t *connection = http_client->connection;
+	struct cache_t *cache = cache_client->cache;
+	struct epoll_thread_t *epoll_thread = cache->epoll_thread;
+	assert(connection->epoll_thread == http_session->epoll_thread);
+	assert(cache_client->aio.epoll_thread == http_session->epoll_thread);
+	assert(cache_client->aio.epoll_thread != epoll_thread);
+	cache_client->aio.epoll_thread = epoll_thread;// dispatch
+	LOG(LOG_INFO, "%s %s ->%s dispatch\n", http_session->epoll_thread->name, string_buf(&http_request->url), epoll_thread->name);
+	connection_read_disable(connection);
+	connection_write_disable(connection);// do nothing
+	assert(connection->event == 0);
+	list_del(&http_session->node);
+	http_session->epoll_thread = NULL;
+	connection->epoll_thread = NULL;
+	aio_summit(&cache_client->aio, NULL, cache_client_dispatch_done);
+}
+
+static void cache_client_dispatch_done(struct aio_t *aio)
+{
+	struct cache_client_t *cache_client = aio->callback_data;
+	struct cache_t *cache = cache_client->cache;
+	struct http_session_t *http_session = cache_client->http_session;
+	struct http_request_t *http_request = &http_session->http_request;
+	struct http_client_t *http_client = http_session->http_client;
+	struct connection_t *connection = http_client->connection;
+	struct epoll_thread_t *epoll_thread = aio->epoll_thread;
+	assert(epoll_thread == cache->epoll_thread);
+	http_session->epoll_thread = epoll_thread;
+	list_add_tail(&http_session->node, &epoll_thread->http_session_list);
+	connection->epoll_thread = epoll_thread;
+	LOG(LOG_INFO, "%s %s dispatch done\n", http_session->epoll_thread->name, string_buf(&http_request->url));
+	connection_read_enable(connection, http_client_body_read);
+}
+
 static void http_session_cache_lookup(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
+	struct http_server_t *http_server = http_session->http_server;
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct cache_t *cache = NULL;
 	struct cache_file_t *cache_file = NULL;
+	assert(http_server == NULL);
 	assert(cache_client == NULL);
 	http_session->cache_client = cache_client = cache_client_alloc();
 	cache_client->http_session = http_session;
@@ -1576,7 +1512,7 @@ static void http_session_cache_lookup(struct http_session_t *http_session)
 	}
 	if (cache->lock++ == 0) {
 		assert(cache->epoll_thread == NULL);
-		cache->epoll_thread = cache_client->aio.epoll_thread;
+		cache->epoll_thread = epoll_thread_select(cache_client->aio.epoll_thread);
 	} else {
 		assert(cache->epoll_thread != NULL);
 	}
@@ -1584,7 +1520,7 @@ static void http_session_cache_lookup(struct http_session_t *http_session)
 	cache_table_unlock();
 
 	if (cache_client->aio.epoll_thread != cache->epoll_thread) {
-		http_client_dispatch(http_session);
+		cache_client_dispatch(cache_client);
 		return;
 	}
 	if (cache->file_number == 0) {
@@ -1756,11 +1692,6 @@ static void cache_client_header_write(struct cache_client_t *cache_client, struc
 	struct http_session_t *http_session = cache_client->http_session;
 	struct http_server_t *http_server = http_session->http_server;
 	assert(!aio_busy(&cache_client->aio));
-	if (!http_reply_cacheable(http_reply)) {
-		LOG(LOG_DEBUG, "%s %s reply disable cache\n", cache_client->aio.epoll_thread->name, cache->url);
-		cache_client_close(cache_client, 1);
-		return;
-	}
 	cache_client->body_pos = http_server->body_offset;
 	if (cache_file == NULL) {
 		assert(cache->file_number == 0);

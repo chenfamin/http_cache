@@ -12,21 +12,15 @@
 
 #include <unistd.h>
 
-#include <netdb.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <net/if.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
-#include <fcntl.h>
 #include <signal.h>
 
 #include <assert.h>
 #include <pthread.h>
 
-#include <sys/epoll.h>
 
 #include "list.h"
 #include "rbtree.h"
@@ -77,10 +71,10 @@ struct epoll_thread_t {
 	int64_t epoll_del_num;
 	int64_t epoll_wait_num;
 
-	struct list_head_t listen_list;
+	struct list_head_t listen_session_list;
+	struct list_head_t http_session_list;
 	struct list_head_t ready_list;
 	struct list_head_t free_list;
-	struct list_head_t http_session_list;
 	struct list_head_t done_list;
 	pthread_mutex_t done_mutex;
 	void *dns_session;
@@ -95,11 +89,9 @@ struct aio_thread_t {
 ssize_t http_recv(int s, void *buf, size_t len, int flags);
 ssize_t http_send(int s, const void *buf, size_t len, int flags);
 
-int socket_non_block(int fd);
 void strlow(uint8_t *dst, uint8_t *src, size_t n);
-const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
 
-struct epoll_thread_t* epoll_thread_select();
+struct epoll_thread_t* epoll_thread_select(struct epoll_thread_t *epoll_thread);
 void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread);
 
 #endif

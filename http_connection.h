@@ -1,6 +1,7 @@
 #ifndef HTTP_CONNECTION_H
 #define HTTP_CONNECTION_H
 
+#include <sys/socket.h>
 #include "http.h"
 
 struct connection_t {
@@ -8,7 +9,7 @@ struct connection_t {
 	struct sockaddr local_addr;
 	struct sockaddr peer_addr;
 	int edge_mode;
-	uint32_t event;
+	uint32_t event;// only EPOLLIN EPOLLOUT
 	uint32_t trigger_event;
 	struct list_head_t node;
 	struct list_head_t ready_node;

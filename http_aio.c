@@ -1,6 +1,8 @@
 #define _XOPEN_SOURCE 500
 #include <unistd.h>
-#include <sys/uio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include "http_mem.h"
 #include "http_aio.h"
 
@@ -34,29 +36,43 @@ void aio_list_broadcast()
 	pthread_mutex_unlock(&aio_list.mutex);
 }
 
-void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)(struct aio_t *aio))
+static void aio_exec_list_add(struct aio_t *aio)
 {
-	assert(aio->epoll_thread != NULL);
-	assert(aio->status == AIO_STATUS_DONE);
-	aio->error = 0;
-	aio->error_str = "";
-	aio->exec = exec;
-	aio->done = done;
 	pthread_mutex_lock(&aio_list.mutex);
 	list_add_tail(&aio->node, &aio_list.list);
-	aio->status = AIO_STATUS_SUMMIT;
 	pthread_cond_signal(&aio_list.cond);
 	pthread_mutex_unlock(&aio_list.mutex);
 }
 
-void aio_exec(struct aio_t *aio)
+static void aio_done_list_add(struct aio_t *aio)
 {
 	struct epoll_thread_t *epoll_thread = aio->epoll_thread;
-	aio->exec(aio);
 	pthread_mutex_lock(&epoll_thread->done_mutex);
 	list_add_tail(&aio->node, &epoll_thread->done_list);
 	pthread_mutex_unlock(&epoll_thread->done_mutex);
 	epoll_thread_pipe_signal(epoll_thread);
+}
+
+void aio_summit(struct aio_t *aio, void (*exec)(struct aio_t *aio), void (*done)(struct aio_t *aio))
+{
+	assert(aio->epoll_thread != NULL);
+	assert(aio->status == AIO_STATUS_DONE);
+	aio->status = AIO_STATUS_SUMMIT;
+	aio->error = 0;
+	aio->error_str = "";
+	aio->exec = exec;
+	aio->done = done;
+	if (exec) {
+		aio_exec_list_add(aio);
+	} else {
+		aio_done_list_add(aio);
+	}
+}
+
+void aio_exec(struct aio_t *aio)
+{
+	aio->exec(aio);
+	aio_done_list_add(aio);
 }
 
 void aio_done(struct aio_t *aio)

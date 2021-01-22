@@ -127,6 +127,7 @@ struct http_session_t {
 };
 
 void http_session_listen(const char *host, int port);
+void http_session_create(struct epoll_thread_t *epoll_thread, int fd);
 void http_session_abort(struct http_session_t *http_session);
 void cache_table_create();
 void cache_table_free();

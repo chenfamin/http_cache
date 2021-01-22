@@ -3,9 +3,20 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <assert.h>
+
+#include <unistd.h>
+
+#include <fcntl.h>
 #include <pthread.h>
+
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <net/if.h>
 #include "http_mem.h"
+
 
 #define likely(x)    __builtin_expect(!!(x), 1)
 #define unlikely(x)  __builtin_expect(!!(x), 0)
@@ -923,3 +934,71 @@ void fifo_clean(struct fifo_t *fifo)
 {
 	http_free(fifo->data);
 }
+
+const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size)
+{
+	if (addr->sa_family == AF_INET) {
+		inet_ntop(addr->sa_family, &((struct sockaddr_in *)addr)->sin_addr, str, size);
+	} else if (addr->sa_family == AF_INET6) {
+		inet_ntop(addr->sa_family, &((struct sockaddr_in6 *)addr)->sin6_addr, str, size);
+	}
+	return str;
+}
+
+int socket_listen(const char *host, unsigned short port, int family)
+{
+	struct sockaddr addr;
+	struct in_addr sin_addr;
+	struct in6_addr sin6_addr;
+	int fd = -1;
+	int var = 1;
+	if (inet_pton(AF_INET, host, &sin_addr) > 0) {
+		((struct sockaddr_in *)&addr)->sin_family = AF_INET;
+		((struct sockaddr_in *)&addr)->sin_port = htons(port);
+		((struct sockaddr_in *)&addr)->sin_addr = sin_addr;
+	} else if (inet_pton(AF_INET6, host, &sin6_addr) > 0) {
+		((struct sockaddr_in6 *)&addr)->sin6_family = AF_INET6;
+		((struct sockaddr_in6 *)&addr)->sin6_port = htons(port);
+		((struct sockaddr_in6 *)&addr)->sin6_addr = sin6_addr;
+	} else {
+		//LOG(LOG_ERROR, "%s addr error\n", host);
+		return -1;
+	}
+	fd = socket(addr.sa_family, SOCK_STREAM, IPPROTO_TCP);
+	if (fd < 0) {
+		//LOG(LOG_ERROR, "socket fd=%d error:%s\n", fd, strerror(errno));
+		return -1;
+	}
+	var = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &var, sizeof(var)) == -1) {
+		//LOG(LOG_ERROR, "setsockopt fd=%d error:%s\n", fd, strerror(errno));
+		close(fd);
+		return -1;
+	}
+	if (bind(fd, &addr, sizeof(addr)) != 0) {
+		//LOG(LOG_ERROR, "listen fd=%d error:%s\n", fd, strerror(errno));
+		close(fd);
+		return -1;
+	}
+	if (listen(fd, 1024) != 0) {
+		//LOG(LOG_ERROR, "listen fd=%d error:%s\n", fd, strerror(errno));
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+int socket_non_block(int fd) 
+{
+	int flags, r;
+	while ((flags = fcntl(fd, F_GETFL, 0)) == -1 && errno == EINTR);
+	if (flags == -1) {
+		return -1; 
+	}   
+	while ((r = fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1 && errno == EINTR);
+	if (r == -1) {
+		return -1; 
+	}   
+	return 0;
+}
+

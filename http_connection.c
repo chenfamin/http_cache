@@ -1,3 +1,4 @@
+#include <sys/epoll.h>
 #include "http.h"
 #include "http_mem.h"
 #include "http_log.h"
@@ -18,7 +19,7 @@ int connection_epoll_add(struct connection_t *connection, uint32_t event)
 		LOG(LOG_ERROR, "fail epoll_fd=%d fd=%d: %s\n", connection->epoll_thread->epoll_fd, connection->fd, strerror(errno));
 		assert(0);
 	} else {
-		connection->event = ev.events;
+		connection->event = event;
 	}
 	connection->epoll_thread->epoll_add_num++;
 	return r;
@@ -29,13 +30,13 @@ int connection_epoll_mod(struct connection_t *connection, uint32_t event)
 	int r;
 	struct epoll_event ev = {0};
 	ev.data.ptr = connection;
-	ev.events = event;
+	ev.events = event | EPOLLET;
 	r = epoll_ctl(connection->epoll_thread->epoll_fd, EPOLL_CTL_MOD, connection->fd, &ev);
 	if (r) {
 		LOG(LOG_ERROR, "fail epoll_fd=%d fd=%d: %s\n", connection->epoll_thread->epoll_fd, connection->fd, strerror(errno));
 		assert(0);
 	} else {
-		connection->event = ev.events;
+		connection->event = event;
 	}
 	connection->epoll_thread->epoll_mod_num++;
 	return r;
