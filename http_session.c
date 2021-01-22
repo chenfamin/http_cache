@@ -72,7 +72,7 @@ static void cache_client_body_append_end(struct cache_client_t *cache_client);
 static void cache_client_bitmap_update(struct cache_client_t *cache_client);
 static void cache_file_open_aio(struct aio_t *aio);
 static void cache_file_open_done(struct aio_t *aio);
-static void cache_client_resume(struct cache_client_t *cache_client);
+static void cache_client_resume(struct cache_client_t *cache_client, int abort);
 static void cache_client_do_write(struct cache_client_t *cache_client);
 static void cache_file_header_write_done(struct aio_t *aio);
 static void cache_client_body_write_done(struct aio_t *aio);
@@ -608,7 +608,11 @@ static void http_client_header_read(struct connection_t *connection)
 		http_client_post_append(http_session, buf + nparse, nread - nparse);
 	}
 	connection_read_enable(connection, http_client_body_read);
-	http_session_cache_lookup(http_session);
+	if (http_request_cacheable(http_request)) {
+		http_session_cache_lookup(http_session);
+	} else {
+		http_session_body_read(http_session);
+	}
 }
 
 static void http_client_body_read(struct connection_t *connection)
@@ -1554,13 +1558,10 @@ static int http_reply_cacheable(struct http_reply_t *http_reply)
 static void http_session_cache_lookup(struct http_session_t *http_session)
 {
 	struct http_request_t *http_request = &http_session->http_request;
-	struct cache_client_t *cache_client = NULL;
+	struct cache_client_t *cache_client = http_session->cache_client;
 	struct cache_t *cache = NULL;
 	struct cache_file_t *cache_file = NULL;
-	if (http_request_cacheable(http_request) == 0) {
-		http_session_body_read(http_session);
-		return;
-	}
+	assert(cache_client == NULL);
 	http_session->cache_client = cache_client = cache_client_alloc();
 	cache_client->http_session = http_session;
 	cache_client->aio.epoll_thread = http_session->epoll_thread;
@@ -1628,15 +1629,12 @@ static void http_session_cache_hit(struct http_session_t *http_session)
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	if (cache_file->abort) {
-		cache_client_close(cache_client, 1);
-	} else if (http_client) {
-		if (string_strlen(&http_client->reply_header) == 0) {
-			assert(cache_file->fd > 0 && cache_file->http_reply);
-			http_client_build_reply(http_session, cache_file->http_reply);
-		}
-		http_session_body_read(http_session);
+	assert(http_client != NULL);
+	if (string_strlen(&http_client->reply_header) == 0) {
+		assert(cache_file->fd > 0 && cache_file->http_reply);
+		http_client_build_reply(http_session, cache_file->http_reply);
 	}
+	http_session_body_read(http_session);
 }
 
 static void http_session_body_read(struct http_session_t *http_session)
@@ -1881,36 +1879,47 @@ static void cache_file_open_done(struct aio_t *aio)
 	}
 }
 
-static void cache_client_resume(struct cache_client_t *cache_client)
+static void cache_client_resume(struct cache_client_t *cache_client, int abort)
 {
+	struct http_session_t *http_session = NULL;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
 	struct aio_t *aio = NULL;
 	assert(cache_file->fd == 0);
+	assert(cache_client->aio.fd != 0);
 	cache_file->fd = cache_client->aio.fd;
 	list_add(&cache_client->aio.node, &cache_file->delay_list);
 	while (!list_empty(&cache_file->delay_list)) {
 		aio = d_list_head(&cache_file->delay_list, struct aio_t, node);
 		list_del(&aio->node);
-		aio->fd = cache_file->fd;
 		aio->status = AIO_STATUS_DONE;
+		aio->fd = cache_file->fd;
 		cache_client = aio->callback_data;
+		http_session = cache_client->http_session;
 		if (cache_client->delay == CACHE_DELAY_READ) {
-			if (cache_client->http_session == NULL) {
-				if (cache_file->abort) {
-					cache_client_close(cache_client, 1);
-				} else {
-					cache_client_close(cache_client, 0);
-				}
+			if (http_session == NULL) {
+				LOG(LOG_DEBUG, "%s %s %s fd=%d cache_client session null\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+				cache_client_close(cache_client, abort? 1:0);
 			} else {
-				http_session_cache_hit(cache_client->http_session);
+				if (abort) {
+					LOG(LOG_ERROR, "%s %s %s fd=%d cache_client read abort\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+					cache_client_close(cache_client, 1);
+					http_session_body_read(http_session);
+				} else {
+					LOG(LOG_DEBUG, "%s %s %s fd=%d cache_client read\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+					http_session_cache_hit(http_session);
+				}
 			}
 		} else if (cache_client->delay == CACHE_DELAY_WRITE) {
-			if (cache_file->abort) {
+			if (abort) {
+				LOG(LOG_ERROR, "%s %s %s fd=%d cache_client write abort\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
 				cache_client_close(cache_client, 1);
 			} else {
 				cache_client_do_write(cache_client);
 			}
+		} else {
+			LOG(LOG_ERROR, "%s %s %s fd=%d cache_client abort\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+			assert(0);
 		}
 	}
 }
@@ -1963,17 +1972,17 @@ static void cache_file_header_write_done(struct aio_t *aio)
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
-	size_t buf_size = aio->iovec[0].buf_size;
-	size_t buf_len = aio->iovec[0].buf_len;
-	if (buf_len < buf_size) {
-		LOG(LOG_ERROR, "%s %s %s fd=%d buf_size=%d buf_len=%d\n", 
-				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
-		cache_file->abort = 1;
-	} else {
-		LOG(LOG_DEBUG, "%s %s %s fd=%d buf_size=%d buf_len=%d\n", 
-				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len);
+	size_t nread = aio->iovec[0].buf_len;
+	assert(aio->iovec[0].buf_size == cache_file->header_size);
+	if (nread < cache_file->header_size) {
+		LOG(LOG_ERROR, "%s %s %s fd=%d header_size=%d nread=%d error:%s\n", 
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->header_size, nread, aio->error_str);
+		cache_client_resume(cache_client, 1);
+		return;
 	}
-	cache_client_resume(cache_client);
+	LOG(LOG_DEBUG, "%s %s %s fd=%d header_size=%d nread=%d\n", 
+			cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->header_size, nread);
+	cache_client_resume(cache_client, 0);
 }
 
 static void cache_client_body_write_done(struct aio_t *aio)
@@ -2032,54 +2041,50 @@ static void cache_file_header_read_done(struct aio_t *aio)
 	size_t buf_size = aio->iovec[0].buf_size;
 	size_t buf_len = aio->iovec[0].buf_len;
 	size_t nparse = 0;
-	if (buf_len > 0) {
-		nparse = http_parser_execute(&cache_client->parser, &reply_parser_settings, buf, buf_len);
-		if (http_reply->parse_state < PARSER_HEADER_DONE) {
-			if (nparse < buf_len) {
-				LOG(LOG_ERROR, "%s %s %s fd=%d header_size=%d nparse=%d error: http parser error\n", 
-						cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_len, nparse);
-				cache_file->abort = 1;
-				cache_client_resume(cache_client);
-			} else {
-				aio->iovec[0].buffer = NULL;
-				aio->iovec[0].buf_len = 0;
-				aio->iovec_len = 1;
-				aio_summit(aio, aio_readv, cache_file_header_read_done);
-			}
-		} else {
-			if ((str = http_header_find(&http_reply->header, "Content-Length"))) {
-				http_reply->content_length = atol(str);
-			}
-			if ((str = http_header_find(&http_reply->header, "X-Internal-Block-Size"))) {
-				block_size = atoi(str);
-			}
-			http_header_del(&http_reply->header, "X-Internal-Url");
-			http_header_del(&http_reply->header, "X-Internal-Block-Size");
-			cache_file->header_size = aio->offset - (buf_len - nparse);
-			cache_file_bitmap_init(cache_file, http_reply->content_length, block_size);
-			cache_client_dump_header(cache_client);
-			aio->offset = cache_file->header_size;
-			aio->iovec[0].buffer = NULL;
-			aio->iovec[0].buf = cache_file->bitmap;
-			aio->iovec[0].buf_size = cache_file->bitmap_size;
-			aio->iovec[0].buf_len = 0;
-			aio->iovec_len = 1;
-			if (buf_len - nparse >= aio->iovec[0].buf_size) {
-				memcpy(aio->iovec[0].buf, buf + nparse, aio->iovec[0].buf_size);
-				aio->iovec[0].buf_len = aio->iovec[0].buf_size;
-			}
-			if (aio->iovec[0].buf_len > 0) {
-				cache_client_bitmap_read_done(aio);
-			} else {
-				aio_summit(aio, aio_readv, cache_client_bitmap_read_done);
-			}
-		}
-	} else {
+	if (buf_len == 0) {
 		LOG(LOG_ERROR, "%s %s %s fd=%d buf_size=%d buf_len=%d error:%s\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_size, buf_len, aio->error_str);
-		cache_file->abort = 1;
-		cache_client_resume(cache_client);
+		cache_client_resume(cache_client, 1);
+		return;
 	}	
+	nparse = http_parser_execute(&cache_client->parser, &reply_parser_settings, buf, buf_len);
+	if (http_reply->parse_state < PARSER_HEADER_DONE) {
+		if (nparse < buf_len) {
+			LOG(LOG_ERROR, "%s %s %s fd=%d header_size=%d nparse=%d error: http parser error\n", 
+					cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, buf_len, nparse);
+			cache_client_resume(cache_client, 1);
+		} else {
+			aio->iovec[0].buffer = NULL;
+			aio->iovec[0].buf_len = 0;
+			aio->iovec_len = 1;
+			aio_summit(aio, aio_readv, cache_file_header_read_done);
+		}
+		return;
+	}
+	if ((str = http_header_find(&http_reply->header, "Content-Length"))) {
+		http_reply->content_length = atol(str);
+	}
+	if ((str = http_header_find(&http_reply->header, "X-Internal-Block-Size"))) {
+		block_size = atoi(str);
+	}
+	http_header_del(&http_reply->header, "X-Internal-Url");
+	http_header_del(&http_reply->header, "X-Internal-Block-Size");
+	cache_file->header_size = aio->offset - (buf_len - nparse);
+	cache_file_bitmap_init(cache_file, http_reply->content_length, block_size);
+	cache_client_dump_header(cache_client);
+	aio->offset = cache_file->header_size;
+	aio->iovec[0].buffer = NULL;
+	aio->iovec[0].buf = cache_file->bitmap;
+	aio->iovec[0].buf_size = cache_file->bitmap_size;
+	aio->iovec[0].buf_len = 0;
+	aio->iovec_len = 1;
+	if (buf_len - nparse >= aio->iovec[0].buf_size) {
+		memcpy(aio->iovec[0].buf, buf + nparse, aio->iovec[0].buf_size);
+		aio->iovec[0].buf_len = aio->iovec[0].buf_size;
+		cache_client_bitmap_read_done(aio);
+	} else {
+		aio_summit(aio, aio_readv, cache_client_bitmap_read_done);
+	}
 }
 
 static void cache_client_bitmap_read_done(struct aio_t *aio)
@@ -2093,12 +2098,12 @@ static void cache_client_bitmap_read_done(struct aio_t *aio)
 	if (nread < cache_file->bitmap_size) {
 		LOG(LOG_ERROR, "%s %s %s fd=%d bitmap_size=%d nread=%d error:%s\n", 
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, nread, aio->error_str);
-		cache_file->abort = 1;
-	} else {
-		LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_size=%d nread=%d\n", 
-				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, nread);
+		cache_client_resume(cache_client, 1);
+		return;
 	}
-	cache_client_resume(cache_client);
+	LOG(LOG_INFO, "%s %s %s fd=%d bitmap_size=%d nread=%d\n", 
+			cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, nread);
+	cache_client_resume(cache_client, 0);
 }
 
 static int cache_file_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end)
@@ -2252,10 +2257,10 @@ static void cache_client_close(struct cache_client_t *cache_client, int del)
 		}
 	}
 	if (cache_client->aio.iovec_len > 0) {
-		LOG(LOG_DEBUG, "%s fd=%d close\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
+		LOG(LOG_INFO, "%s fd=%d close\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
 		aio_summit(&cache_client->aio, cache_file_close_aio, cache_file_close_done);
 	} else {
-		LOG(LOG_DEBUG, "%s fd=%d nothing to do\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
+		LOG(LOG_INFO, "%s fd=%d nothing to do\n", cache_client->aio.epoll_thread->name, cache_client->aio.fd);
 		cache_client_free(cache_client);
 	}
 }
@@ -2279,12 +2284,12 @@ static void cache_file_close_done(struct aio_t *aio)
 		if (aio->error) {
 			LOG(LOG_ERROR, "%s fd=%d close error:%s\n", aio->epoll_thread->name, aio->fd, aio->error_str);
 		} else {
-			LOG(LOG_DEBUG, "%s fd=%d close ok\n", aio->epoll_thread->name, aio->fd);
+			LOG(LOG_INFO, "%s fd=%d close ok\n", aio->epoll_thread->name, aio->fd);
 		}
 	}
 	cache_client_free(cache_client);
 	if (cache_file) {
-		LOG(LOG_DEBUG, "%s %s fd=%d unlink\n", aio->epoll_thread->name, cache_file->path, aio->fd);
+		LOG(LOG_INFO, "%s %s fd=%d unlink\n", aio->epoll_thread->name, cache_file->path, aio->fd);
 		cache_file_number_free(cache_file);
 		cache_file_free(cache_file);
 	}

@@ -45,7 +45,6 @@ struct cache_file_t {
 	char path[256];
 	int64_t file_number;
 	int fd;
-	int abort;
 };
 
 struct cache_t {
