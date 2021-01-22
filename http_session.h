@@ -1,10 +1,11 @@
 #ifndef HTTP_SESSION_H
 #define HTTP_SESSION_H
 
-#include "http.h"
-#include "http_mem.h"
-#include "http_aio.h"
+#include "http_util.h"
 #include "http_header.h"
+#include "http_connection.h"
+#include "http_aio.h"
+#include "http_dns.h"
 
 struct http_request_t {
 	enum http_method method;
@@ -126,7 +127,6 @@ struct http_session_t {
 	struct epoll_thread_t *epoll_thread;
 };
 
-void http_session_listen(const char *host, int port);
 void http_session_create(struct epoll_thread_t *epoll_thread, int fd);
 void http_session_abort(struct http_session_t *http_session);
 void cache_table_create();

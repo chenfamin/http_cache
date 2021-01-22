@@ -6,6 +6,8 @@
 #define LOG_INFO 2
 #define LOG_DEBUG 3
 
+#include "http_util.h"
+
 void log_file_open();
 void log_file_close();
 

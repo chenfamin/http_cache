@@ -1,6 +1,3 @@
-#include <sys/epoll.h>
-#include "http.h"
-#include "http_mem.h"
 #include "http_log.h"
 #include "http_connection.h"
 int connection_epoll_add(struct connection_t *connection, uint32_t event)
@@ -150,6 +147,7 @@ void connection_close(struct connection_t *connection, int delay_free)
 	struct epoll_thread_t *epoll_thread = connection->epoll_thread;
 	connection_read_disable(connection);
 	connection_write_disable(connection);
+        assert(connection->event == 0);
 	LOG(LOG_INFO, "%s epoll_fd=%d fd=%d read_disable=%"PRId64" write_disable=%"PRId64" epoll_add=%"PRId64" epoll_del=%"PRId64" epoll_mod=%"PRId64" epoll_wait=%"PRId64"\n", 
 			epoll_thread->name, epoll_thread->epoll_fd, connection->fd, connection->read_disable_num, connection->write_disable_num,
 			epoll_thread->epoll_add_num, epoll_thread->epoll_del_num, epoll_thread->epoll_mod_num, epoll_thread->epoll_wait_num);
@@ -157,7 +155,7 @@ void connection_close(struct connection_t *connection, int delay_free)
 	close(connection->fd);
 	connection->fd = -1;
 	if (delay_free == CONNECTION_FREE_DELAY) {
-		list_add_tail(&connection->node, &connection->epoll_thread->free_list);
+		list_add_tail(&connection->ready_node, &connection->epoll_thread->free_list);
 	} else {
 		assert(delay_free == CONNECTION_FREE_NOW);
 		http_free(connection);

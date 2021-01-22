@@ -1,5 +1,5 @@
-#include "http_mem.h"
 #include "http_log.h"
+#include "http_session.h"
 #include "listen_session.h"
 
 static void listen_session_accept(struct connection_t *connection);
@@ -10,7 +10,7 @@ void listen_session_create(struct epoll_thread_t *epoll_thread, int fd)
 	struct connection_t *connection = NULL;
 	socklen_t addr_len = sizeof(struct sockaddr);
 	char ip_str[64] = {0};
-
+	assert(fd > 0);
 	listen_session = http_malloc(sizeof(struct listen_session_t));
 	memset(listen_session, 0, sizeof(struct listen_session_t));
 	list_add_tail(&listen_session->node, &epoll_thread->listen_session_list);
@@ -57,5 +57,5 @@ static void listen_session_accept(struct connection_t *connection)
 	connection_read_enable(connection, listen_session_accept);
 	socket_non_block(fd);
 	LOG(LOG_INFO, "%s accept %s fd=%d\n", epoll_thread->name, sockaddr_to_string(&peer_addr, ip_str, sizeof(ip_str)), fd);
-	//http_session_create(epoll_thread, fd);
+	http_session_create(epoll_thread, fd);
 }

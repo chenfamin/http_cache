@@ -1,7 +1,3 @@
-#include <stdio.h>
-#include <stdarg.h>
-#include "http.h"
-#include "http_mem.h"
 #include "http_log.h"
 
 struct log_file_t {

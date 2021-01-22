@@ -1,9 +1,10 @@
 #ifndef HTTP_AIO_H
 #define HTTP_AIO_H
 
-#include "http.h"
+#include "http_util.h"
 
-#define MAX_IOVEC 4
+
+#define MAX_LOOP 4
 
 enum aio_status_t {
 	AIO_STATUS_DONE,

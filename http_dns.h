@@ -1,8 +1,8 @@
 #ifndef HTTP_DNS_H
 #define HTTP_DNS_H
 
-#include "http.h"
-
+#include "http_util.h"
+#include "http_connection.h"
 
 #define MAX_DNS_BUFFER 1460
 
@@ -16,7 +16,6 @@
 #define RFC1035_MAXHOSTNAMESZ 256
 #define RFC1035_MAXLABELSZ 63
 #define rfc1035_unpack_error 15
-
 
 struct dns_cache_table_t {
 	struct rb_root rb_root;

@@ -1,8 +1,7 @@
 #ifndef HTTP_HEADER_H
 #define HTTP_HEADER_H
 
-#include "http.h"
-#include "http_mem.h"
+#include "http_util.h"
 #include "http_parser.h"
 
 #define bit_set(mask, bit) ((void)((mask) |= ((1L<<(bit)))))

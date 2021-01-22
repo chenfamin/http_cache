@@ -1,8 +1,10 @@
 #ifndef HTTP_CONNECTION_H
 #define HTTP_CONNECTION_H
 
-#include <sys/socket.h>
-#include "http.h"
+#include "http_util.h"
+
+#define CONNECTION_FREE_NOW 0
+#define CONNECTION_FREE_DELAY 1
 
 struct connection_t {
 	int fd; 
@@ -10,8 +12,7 @@ struct connection_t {
 	struct sockaddr peer_addr;
 	int edge_mode;
 	uint32_t event;// only EPOLLIN EPOLLOUT
-	uint32_t trigger_event;
-	struct list_head_t node;
+	uint32_t trigger_event;// only EPOLLIN EPOLLOUT
 	struct list_head_t ready_node;
 	void (*handle_read)(struct connection_t *connection);
 	void (*handle_write)(struct connection_t *connection);

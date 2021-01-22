@@ -1,9 +1,9 @@
-#include "http.h"
+#include "http_util.h"
 #include "http_log.h"
 #include "http_aio.h"
 #include "http_connection.h"
-#include "http_dns.h"
 #include "listen_session.h"
+#include "http_dns.h"
 #include "http_session.h"
 
 static int epoll_threads_num = 2;
@@ -118,8 +118,8 @@ void* epoll_thread_loop(void *arg)
 		}
 		epoll_thread_process_events(epoll_thread, &ready_list);
 		while (!list_empty(&epoll_thread->free_list)) {
-			connection = d_list_head(&epoll_thread->free_list, struct connection_t, node);
-			list_del(&connection->node);
+			connection = d_list_head(&epoll_thread->free_list, struct connection_t, ready_node);
+			list_del(&connection->ready_node);
 			http_free(connection);
 		}
 		if (epoll_thread_exit) {
@@ -166,12 +166,22 @@ static void epoll_thread_abort_session(struct epoll_thread_t *epoll_thread)
 
 struct epoll_thread_t* epoll_thread_select(struct epoll_thread_t *epoll_thread)
 {
+	return epoll_thread;
 	static unsigned int i = 0;
 	epoll_thread = &epoll_threads[i];
 	i = (i + 1) % epoll_threads_num;
 
 	epoll_thread = &epoll_threads[0];
 	return epoll_thread;
+}
+
+void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
+{
+	if (!epoll_thread->signal) {
+		epoll_thread->signal = 1;
+		//LOG(LOG_DEBUG, "signal\n");
+		write(epoll_thread->pipe_write_fd, "1", 1);
+	}
 }
 
 static void epoll_thread_pipe_read(struct connection_t *connection)
@@ -199,14 +209,6 @@ static void epoll_thread_pipe_read(struct connection_t *connection)
 	connection_read_enable(connection, epoll_thread_pipe_read);
 }
 
-void epoll_thread_pipe_signal(struct epoll_thread_t *epoll_thread)
-{
-	if (!epoll_thread->signal) {
-		epoll_thread->signal = 1;
-		//LOG(LOG_DEBUG, "signal\n");
-		write(epoll_thread->pipe_write_fd, "1", 1);
-	}
-}
 
 void aio_thread_init(struct aio_thread_t *aio_thread)
 {

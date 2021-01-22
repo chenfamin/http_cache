@@ -1,9 +1,4 @@
 #define _XOPEN_SOURCE 500
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include "http_mem.h"
 #include "http_aio.h"
 
 static struct aio_list_t aio_list;

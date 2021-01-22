@@ -1,7 +1,5 @@
-#include "http.h"
-#include "http_mem.h"
+#include "http_util.h"
 #include "http_log.h"
-#include "http_connection.h"
 #include "http_dns.h"
 
 static struct dns_cache_table_t dns_cache_table;

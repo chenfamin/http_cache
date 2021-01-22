@@ -1,5 +1,3 @@
-#include "http.h"
-#include "http_mem.h"
 #include "http_log.h"
 #include "http_header.h"
 
