@@ -23,7 +23,9 @@ struct http_reply_t {
 	int http_major;
 	int http_minor;
 	struct http_header_t header;
+	int chunked;
 	int64_t content_length;
+	int64_t body_length;// body_length == content_length or body_length == chunk_length
 	enum parser_header_state parse_state;
 };
 
@@ -99,8 +101,7 @@ struct http_server_t {
 	int64_t request_header_send_size;
 	int64_t post_offset_current;
 	http_parser parser;
-	int chunked;
-	struct http_chunked_t http_chunked;
+	struct http_chunked_t chunk;
 	struct dns_info_t dns_info;
 	uint16_t port;
 	int keep_alive;

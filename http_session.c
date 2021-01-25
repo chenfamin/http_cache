@@ -61,19 +61,19 @@ static void cache_client_dump_header(struct cache_client_t *cache_client);
 static void cache_client_header_build(struct cache_client_t *cache_client, struct http_reply_t *http_reply);
 static void cache_client_header_write(struct cache_client_t *cache_client, struct http_reply_t *http_reply);
 static void cache_client_body_append(struct cache_client_t *cache_client, struct buffer_t *buffer);
-static void cache_client_body_append_end(struct cache_client_t *cache_client);
-static void cache_client_bitmap_update(struct cache_client_t *cache_client);
+static void cache_client_body_flush(struct cache_client_t *cache_client, int64_t body_length);
 static void cache_file_open_aio(struct aio_t *aio);
 static void cache_file_open_done(struct aio_t *aio);
 static void cache_client_resume(struct cache_client_t *cache_client, int abort);
 static void cache_client_do_write(struct cache_client_t *cache_client);
 static void cache_file_header_write_done(struct aio_t *aio);
 static void cache_client_body_write_done(struct aio_t *aio);
+static void cache_client_bitmap_update(struct cache_client_t *cache_client);
 static void cache_client_bitmap_write_done(struct aio_t *aio);
 static void cache_file_header_read_done(struct aio_t *aio);
 static void cache_client_bitmap_read_done(struct aio_t *aio);
-static int cache_file_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end);
-static void cache_file_body_read_done(struct aio_t *aio);
+static int cache_client_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end);
+static void cache_client_body_read_done(struct aio_t *aio);
 static void cache_client_close(struct cache_client_t *cache_client, int del);
 static void cache_file_close_aio(struct aio_t *aio);
 static void cache_file_close_done(struct aio_t *aio);
@@ -180,11 +180,15 @@ static int request_on_header_value(http_parser *hp, const char *at, size_t lengt
 
 static int request_on_headers_complete(http_parser *hp)
 {
-	struct http_request_t *http_request = (struct http_request_t*)hp->data;
+	struct http_request_t *http_request = hp->data;
+	const char *str;
 	http_request->http_major = hp->http_major;
 	http_request->http_minor = hp->http_minor;
 	http_request->method = hp->method;
 	http_request->parse_state = PARSER_HEADER_DONE;
+	if ((str = http_header_find(&http_request->header, "Content-Length"))) {
+		http_request->content_length = atol(str);
+	}
 	return 1;
 }
 
@@ -243,10 +247,20 @@ static int reply_on_header_value(http_parser *hp, const char *at, size_t length)
 static int reply_on_headers_complete(http_parser *hp) 
 {
 	struct http_reply_t *http_reply = hp->data;
+	const char *str;
 	http_reply->status_code = hp->status_code;
 	http_reply->http_major = hp->http_major;
 	http_reply->http_minor = hp->http_minor;
 	http_reply->parse_state = PARSER_HEADER_DONE;
+	if ((str = http_header_find(&http_reply->header, "Transfer-Encoding"))) {
+		if (strcasecmp(str, "chunked") == 0) {
+			http_reply->chunked = 1;
+		} else {
+			http_header_del(&http_reply->header, "Transfer-Encoding");
+		}
+	} else if (http_reply->status_code != 206 && (str = http_header_find(&http_reply->header, "Content-Length"))) {
+		http_reply->content_length = atol(str);
+	}
 	return 1; 
 }
 
@@ -568,12 +582,6 @@ static int http_client_header_process(struct http_session_t *http_session)
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_client_t *http_client = http_session->http_client;
 	const char *str = NULL;
-	str = http_header_find(&http_request->header, "Content-Length");
-	if (str) {
-		http_request->content_length = atol(str);
-		//http_client->post_expect_size = http_request->content_length;
-	}
-	http_session->post_low = http_session->post_high = 0;
 	if (http_request->http_minor >= 1) {
 		http_client->keep_alive = 1;
 	}
@@ -621,11 +629,11 @@ static void http_client_build_reply(struct http_session_t *http_session, struct 
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_client_t *http_client = http_session->http_client;
 	struct http_header_entry_t *header_entry = NULL;
-	int status_code = http_reply->status_code;
+	int status_code = 0;
 	int64_t offset;
 	int64_t length;
 	assert(string_strlen(&http_client->reply_header) == 0);
-	if (http_request->range && http_reply->status_code == 200 && http_reply->content_length > 0) {
+	if (http_request->range && http_reply->content_length > 0 && (http_reply->status_code == 200 || http_reply->status_code == 206) ) {
 		offset = http_request->range->offset;
 		length = http_request->range->length;
 		if (offset == -1) {
@@ -646,6 +654,7 @@ static void http_client_build_reply(struct http_session_t *http_session, struct 
 			status_code = 206;
 		}
 	} else {
+		status_code = http_reply->status_code;
 		offset = 0;
 		length = http_reply->content_length;
 	}
@@ -867,6 +876,9 @@ static void http_server_close(struct http_session_t *http_session, int error_cod
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_server_t *http_server = http_session->http_server;
 	struct connection_t *connection = http_server->connection;
+	if (http_session->cache_client) {
+		cache_client_body_flush(http_session->cache_client, http_server->http_reply->body_length);
+	}
 	LOG(LOG_INFO, "%s %s fd=%d body_offset=%"PRId64" body_recv_size=%"PRId64" body_expect_size=%"PRId64" error_code=%d\n",
 			http_session->epoll_thread->name, string_buf(&http_request->url), connection? connection->fd:0,
 			http_server->body_offset, http_session->body_high - http_server->body_offset,
@@ -882,9 +894,6 @@ static void http_server_close(struct http_session_t *http_session, int error_cod
 	dns_info_clean(&http_server->dns_info);
 	http_free(http_server);
 	http_session->http_server = NULL;
-	if (http_session->cache_client) {
-		cache_client_body_append_end(http_session->cache_client);
-	}
 	if (http_session->http_client) {
 		http_client_check_close(http_session, error_code);
 	} else {
@@ -1161,14 +1170,14 @@ static void http_server_header_read(struct connection_t *connection)
 	}
 	http_server_dump_header(http_session);
 	if (http_server_header_process(http_session)) {
-		http_server_close(http_session, 503);
+		http_server_close(http_session, 416);
 		return;
 	}
 	if (nparse < nread) {
 		body_size = nread - nparse;
 		body_size = MIN(nread - nparse, http_server->body_offset_expect - http_session->body_high);
 		http_session_body_append(http_session, buf + nparse, body_size);
-		if (http_server->chunked) {
+		if (http_reply->chunked) {
 			http_server_parse_chunk(http_session, buf + nparse, body_size);
 		}
 	}
@@ -1200,6 +1209,7 @@ static void http_server_body_read(struct connection_t *connection)
 	struct http_session_t *http_session = connection->arg;
 	struct http_request_t *http_request = &http_session->http_request;
 	struct http_server_t *http_server = http_session->http_server;
+	struct http_reply_t *http_reply = http_server->http_reply;
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct buffer_t *buffer = NULL;
 	char *buf = NULL;
@@ -1243,7 +1253,7 @@ static void http_server_body_read(struct connection_t *connection)
 		if (cache_client && buffer_full(buffer)) {
 			cache_client_body_append(cache_client, buffer);
 		}
-		if (http_server->chunked) {
+		if (http_reply->chunked) {
 			http_server_parse_chunk(http_session, buf, nread);
 		}
 	}
@@ -1271,7 +1281,8 @@ static int http_server_header_process(struct http_session_t *http_session)
 	struct cache_client_t *cache_client = http_session->cache_client;
 	struct connection_t *connection = http_server->connection;
 	struct http_reply_t *http_reply = http_server->http_reply;
-	char buf[256];
+	struct buffer_t *buffer = NULL;
+	char buf[64];
 	const char *str = NULL;
 	struct http_content_range_t *content_range = NULL;
 	if (http_reply->status_code == 206) {
@@ -1281,6 +1292,7 @@ static int http_server_header_process(struct http_session_t *http_session)
 			http_header_del(&http_reply->header, "Content-Range");
 			if (content_range) {
 				http_reply->content_length = content_range->entity_length;
+				http_reply->body_length = http_reply->content_length;
 				http_server->body_offset = content_range->start;
 				http_server->body_offset_expect = content_range->end + 1;
 				snprintf(buf, sizeof(buf), "%"PRId64"", http_reply->content_length);
@@ -1295,38 +1307,33 @@ static int http_server_header_process(struct http_session_t *http_session)
 		}
 	} else {
 		http_server->body_offset = 0;
-		if ((str = http_header_find(&http_reply->header, "Transfer-Encoding"))) {
-			if (strcasecmp(str, "chunked") == 0) {
-				http_server->chunked = 1;
-				http_server->body_offset_expect = INT64_MAX;
-			} else {
-				http_header_del(&http_reply->header, "Transfer-Encoding");
-			}
-		} else if ((str = http_header_find(&http_reply->header, "Content-Length"))) {
-			http_reply->content_length = atoll(str);
+		if (http_reply->chunked) {
+			http_server->body_offset_expect = INT64_MAX;
+		} else if (http_reply->content_length >= 0) {
+			http_reply->body_length = http_reply->content_length;
 			http_server->body_offset_expect = http_reply->content_length;
-		}
-		http_session->body_low = http_session->body_high = 0;
-		if (http_reply->status_code == 204 || http_reply->status_code == 304) {
-			http_server->body_offset_expect = http_server->body_offset;
+		} else {
+			http_server->body_offset_expect = INT64_MAX;
 		}
 	}
-	if (http_request->method == HTTP_HEAD) {
+	if (http_reply->status_code == 204 || http_reply->status_code == 304 || http_request->method == HTTP_HEAD) {
 		http_server->body_offset_expect = http_server->body_offset;
 	}
-	if (http_session->body_low == 0 && http_session->body_high == 0) {
+	if (http_session->body_low == 0 && http_session->body_high == 0 && fifo_len(&http_session->body_fifo) == 0) { //alloc buffer when first reply
 		http_session->body_low = http_session->body_high = http_server->body_offset;
-	} else {
-		// todo check range if error return
-	}
-	if (http_client) {
-		if (string_strlen(&http_client->reply_header) == 0) {
+		if (http_client) {
+			assert(string_strlen(&http_client->reply_header) == 0);
 			http_client_build_reply(http_session, http_reply);
 			connection_write_enable(http_client->connection, http_client_header_write);
-		} else if (http_reply->status_code != 200) {
-			LOG(LOG_ERROR, "%s %s fd=%d client need abort\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-			return -1;
 		}
+		buffer = buffer_alloc(PAGE_SIZE);
+		buffer->size = PAGE_SIZE - http_session->body_low % PAGE_SIZE;
+		fifo_push_tail(&http_session->body_fifo, buffer);
+		LOG(LOG_ERROR, "%s %s fd=%d body alloc buffer_size=%d\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, buffer->size);
+	} else if (http_server->body_offset != http_session->body_high) {
+		LOG(LOG_ERROR, "%s %s fd=%d range error body_high=%"PRId64" body_offset=%"PRId64"\n",
+				http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, http_session->body_high, http_server->body_offset);
+		return -1;
 	}
 	if (cache_client) {
 		if (http_reply_cacheable(http_reply)) {
@@ -1345,6 +1352,7 @@ static int http_server_parse_chunk(struct http_session_t *http_session, const ch
 	struct http_server_t *http_server = http_session->http_server;
 	struct http_client_t *http_client = http_session->http_client;
 	struct connection_t *connection = http_server->connection;
+	struct http_reply_t *http_reply = http_server->http_reply;
 	int rc;
 	size_t buf_pos;
 	const char *ptr = NULL;
@@ -1353,23 +1361,24 @@ static int http_server_parse_chunk(struct http_session_t *http_session, const ch
 	while (1) {
 		ptr = buf + nparsed;
 		ptr_len = len - nparsed;
-		rc = http_parse_chunked(ptr, ptr_len, &buf_pos, &http_server->http_chunked);
+		rc = http_parse_chunked(ptr, ptr_len, &buf_pos, &http_server->chunk);
 		nparsed += buf_pos;
 		if (rc == HTTP_OK) {
-			if (ptr_len - buf_pos >= http_server->http_chunked.size) {
-				nparsed += http_server->http_chunked.size;
-				http_server->http_chunked.size = 0; 
+			if (ptr_len - buf_pos >= http_server->chunk.size) {
+				nparsed += http_server->chunk.size;
+				http_server->chunk.size = 0; 
 				continue;
 			}    
-			http_server->http_chunked.size -= ptr_len - buf_pos;
+			http_server->chunk.size -= ptr_len - buf_pos;
 			nparsed += ptr_len - buf_pos;
 			continue;
 		}    
 		if (rc == HTTP_DONE) {
 			LOG(LOG_DEBUG, "%s %s fd=%d done\n", http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd);
-			http_server->body_offset_expect = http_session->body_high;
+			http_reply->body_length = http_session->body_high;
+			http_server->body_offset_expect = http_reply->body_length;
 			if (http_client) {
-				http_client->body_offset_expect = http_session->body_high;
+				http_client->body_offset_expect = http_reply->body_length;
 			}
 			break;
 		}    
@@ -1411,6 +1420,7 @@ static struct http_reply_t* http_reply_alloc()
 	memset(http_reply, 0, sizeof(struct http_reply_t));
 	http_header_init(&http_reply->header);
 	http_reply->content_length = -1;
+	http_reply->body_length = -1;
 	return http_reply;
 }
 
@@ -1420,7 +1430,9 @@ static void http_reply_copy(struct http_reply_t *dest, struct http_reply_t *src)
 	dest->http_major = src->http_major;
 	dest->http_minor = src->http_minor;
 	http_header_copy(&dest->header, &src->header);
+	dest->chunked = src->chunked;
 	dest->content_length = src->content_length;
+	dest->body_length = src->body_length;
 	dest->parse_state = src->parse_state;
 }
 
@@ -1603,13 +1615,15 @@ static void http_session_body_read(struct http_session_t *http_session)
 	if (range.length > 0) {
 		if (cache_client) {
 			if (!aio_busy(&cache_client->aio)) {
-				if (cache_file_body_read(cache_client, range.offset, range.offset + range.length) == 0) {
+				if (cache_client_body_read(cache_client, range.offset, range.offset + range.length) == 0) {
 					http_server_create(http_session, &range);
 				}
 			}
 		} else {
 			http_server_create(http_session, &range);
 		}
+	} else if (http_request->range) {
+		http_server_create(http_session, http_request->range);
 	} else {
 		http_server_create(http_session, NULL);
 	}
@@ -1669,6 +1683,7 @@ static void cache_client_header_build(struct cache_client_t *cache_client, struc
 	struct string_t string;
 	string_init_size(&string, PAGE_SIZE);
 	struct http_header_entry_t *header_entry;
+	assert(http_reply->status_code != 206);
 	assert(cache_file->bitmap_bit_size == 0);
 	http_reply_copy(cache_file->http_reply, http_reply);
 	string_strcat_printf(&string, "HTTP/%d.%d %s\r\n", 
@@ -1719,7 +1734,6 @@ static void cache_client_header_write(struct cache_client_t *cache_client, struc
 		aio->fd = cache_file->fd;
 		cache_client_do_write(cache_client);
 	} else {
-		aio->fd = -1;
 		cache_client_close(cache_client, 1);
 	}
 }
@@ -1735,43 +1749,38 @@ static void cache_client_body_append(struct cache_client_t *cache_client, struct
 	}
 }
 
-static void cache_client_body_append_end(struct cache_client_t *cache_client)
+static void cache_client_body_flush(struct cache_client_t *cache_client, int64_t body_length)
 {
 	struct http_session_t *http_session = cache_client->http_session;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
+	struct http_reply_t *http_reply = cache_file->http_reply;
 	struct buffer_t *buffer = NULL;
+	int64_t last_buffer_low = 0;
 	cache_client->bitmap_flush = 1;
+	if (http_reply->chunked) {
+		assert(http_reply->body_length == 0);
+		http_reply->body_length = body_length;
+	} else if (http_reply->content_length >= 0) {
+		assert(body_length == http_reply->content_length);
+	}
+	if (http_reply->body_length >= 0) {
+		last_buffer_low = http_reply->body_length / PAGE_SIZE * PAGE_SIZE;
+	} else {
+		LOG(LOG_ERROR, "%s %s not centent_length or chunk_length\n", cache_client->aio.epoll_thread->name, cache->url);
+	}
+	LOG(LOG_DEBUG, "%s %s last_buffer_low=%"PRId64"\n", cache_client->aio.epoll_thread->name, cache->url, last_buffer_low);
 	buffer = fifo_tail(&http_session->body_fifo);
 	if (buffer && buffer->len > 0 && !buffer_full(buffer)) {
-		if (http_session->body_high == cache_file->http_reply->content_length) {
+		if (http_session->body_high - buffer->len == last_buffer_low) {
+			LOG(LOG_DEBUG, "%s %s append len=%d\n", cache_client->aio.epoll_thread->name, cache->url, buffer->len);
 			cache_client_body_append(cache_client, buffer);
 		} else {
 			LOG(LOG_DEBUG, "%s %s skip len=%d\n", cache_client->aio.epoll_thread->name, cache->url, buffer->len);
-			if (!aio_busy(&cache_client->aio)) {
-				cache_client_do_write(cache_client);
-			}
 		}
 	}
-}
-
-static void cache_client_bitmap_update(struct cache_client_t *cache_client)
-{
-	struct cache_t *cache = cache_client->cache;
-	struct cache_file_t *cache_file = cache->cache_file;
-	size_t byte_pos;
-	size_t bit_pos;
-	while (cache_client->body_pos - cache_client->bitmap_pos >= cache_file->bitmap_bit_size) {
-		bit_pos = cache_client->bitmap_pos / cache_file->bitmap_bit_size;
-		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
-		assert(byte_pos < cache_file->bitmap_size);
-		cache_file->bitmap[byte_pos] |= (1 << (bit_pos & 0x7));
-		cache_client->bitmap_pos += cache_file->bitmap_bit_size;
-	}
-	if (cache_client->body_pos == cache_file->http_reply->content_length) {
-		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
-		cache_file->bitmap[byte_pos] = 0xff;
-		cache_client->bitmap_pos = cache_file->http_reply->content_length;
+	if (!aio_busy(&cache_client->aio)) {
+		cache_client_do_write(cache_client);
 	}
 }
 
@@ -1806,6 +1815,7 @@ static void cache_file_open_done(struct aio_t *aio)
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
 	struct cache_file_t *cache_file = cache->cache_file;
+	LOG(LOG_INFO, "%s %s %s fd=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd);
 	if (aio->flags == O_RDWR) {
 		cache_file_header_read_done(aio);
 	} else {
@@ -1948,6 +1958,29 @@ static void cache_client_body_write_done(struct aio_t *aio)
 	}
 }
 
+static void cache_client_bitmap_update(struct cache_client_t *cache_client)
+{
+	struct cache_t *cache = cache_client->cache;
+	struct cache_file_t *cache_file = cache->cache_file;
+	struct http_reply_t *http_reply = cache_file->http_reply;
+	size_t byte_pos;
+	size_t bit_pos;
+	if (http_reply->content_length >= 0) {
+		while (cache_client->body_pos - cache_client->bitmap_pos >= cache_file->bitmap_bit_size) {
+			bit_pos = cache_client->bitmap_pos / cache_file->bitmap_bit_size;
+			byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
+			assert(byte_pos < cache_file->bitmap_size);
+			cache_file->bitmap[byte_pos] |= (1 << (bit_pos & 0x7));
+			cache_client->bitmap_pos += cache_file->bitmap_bit_size;
+		}
+	}
+	if (cache_client->body_pos == http_reply->body_length) {
+		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
+		cache_file->bitmap[byte_pos] = 0xff;
+		cache_client->bitmap_pos = http_reply->body_length;
+	}
+}
+
 static void cache_client_bitmap_write_done(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
@@ -1957,10 +1990,12 @@ static void cache_client_bitmap_write_done(struct aio_t *aio)
 	size_t buf_len = aio->iovec[0].buf_len;
 	assert(buf_size == cache_file->bitmap_size);
 	if (buf_len < cache_file->bitmap_size) {
-		LOG(LOG_ERROR, "%s %s %s fd=%d bitmap_size=%d nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, buf_len);
+		LOG(LOG_ERROR, "%s %s %s fd=%d bitmap_size=%d nwrite=%d\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, buf_len);
 		cache_client_close(cache_client, 1);
 	} else {
-		LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_size=%d nwrite=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, buf_len);
+		LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_size=%d nwrite=%d\n",
+				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, buf_len);
 		cache_client_do_write(cache_client);
 	}
 }
@@ -1997,8 +2032,9 @@ static void cache_file_header_read_done(struct aio_t *aio)
 		}
 		return;
 	}
-	if ((str = http_header_find(&http_reply->header, "Content-Length"))) {
-		http_reply->content_length = atol(str);
+	assert(http_reply->status_code != 206);
+	if (http_reply->content_length >= 0) {
+		http_reply->body_length = http_reply->content_length;
 	}
 	if ((str = http_header_find(&http_reply->header, "X-Internal-Block-Size"))) {
 		block_size = atoi(str);
@@ -2042,7 +2078,7 @@ static void cache_client_bitmap_read_done(struct aio_t *aio)
 	cache_client_resume(cache_client, 0);
 }
 
-static int cache_file_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end)
+static int cache_client_body_read(struct cache_client_t *cache_client, int64_t start, int64_t end)
 {
 	struct http_session_t *http_session = cache_client->http_session;
 	struct cache_t *cache = cache_client->cache;
@@ -2057,7 +2093,7 @@ static int cache_file_body_read(struct cache_client_t *cache_client, int64_t sta
 	if (check_size + start > end) {
 		check_size = end - start;
 	}
-	if (cache_file->http_reply->content_length > 0) {
+	if (cache_file->http_reply->content_length >= 0) {
 		while (hit_size < check_size) {
 			byte_pos = (start + hit_size) / cache_file->bitmap_byte_size;
 			bit_pos = (start + hit_size) / cache_file->bitmap_bit_size;
@@ -2098,12 +2134,12 @@ static int cache_file_body_read(struct cache_client_t *cache_client, int64_t sta
 			cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, check_size, hit_size, buffer_size);
 	if (aio->iovec_len > 0) {
 		cache_client->aio.offset = http_session->body_high + cache_file->header_size + cache_file->bitmap_size;
-		aio_summit(&cache_client->aio, aio_readv, cache_file_body_read_done);
+		aio_summit(&cache_client->aio, aio_readv, cache_client_body_read_done);
 	}
 	return aio->iovec_len;
 }
 
-static void cache_file_body_read_done(struct aio_t *aio)
+static void cache_client_body_read_done(struct aio_t *aio)
 {
 	struct cache_client_t *cache_client = aio->callback_data;
 	struct cache_t *cache = cache_client->cache;
