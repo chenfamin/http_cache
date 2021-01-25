@@ -10,6 +10,7 @@ void listen_session_create(struct epoll_thread_t *epoll_thread, int fd)
 	struct connection_t *connection = NULL;
 	socklen_t addr_len = sizeof(struct sockaddr);
 	char ip_str[64] = {0};
+	unsigned short port = 0;
 	assert(fd > 0);
 	listen_session = http_malloc(sizeof(struct listen_session_t));
 	memset(listen_session, 0, sizeof(struct listen_session_t));
@@ -20,9 +21,11 @@ void listen_session_create(struct epoll_thread_t *epoll_thread, int fd)
 	socket_non_block(fd);
 	connection->fd = fd;
 	getsockname(connection->fd, &connection->local_addr, &addr_len);
+	sockaddr_string(&connection->local_addr, ip_str, sizeof(ip_str));
+	port = sockaddr_port(&connection->local_addr);
 	connection->epoll_thread = epoll_thread;
 	connection->arg = listen_session;
-	LOG(LOG_INFO, "%s listen %s fd=%d\n", epoll_thread->name, sockaddr_to_string(&connection->local_addr, ip_str, sizeof(ip_str)), connection->fd);
+	LOG(LOG_INFO, "%s listen %s:%d fd=%d\n", epoll_thread->name, ip_str, port, connection->fd);
 	connection_read_enable(connection, listen_session_accept);
 }
 
@@ -41,6 +44,7 @@ static void listen_session_accept(struct connection_t *connection)
 	struct sockaddr peer_addr;
 	socklen_t addr_len = sizeof(struct sockaddr);
 	char ip_str[64] = {0};
+	unsigned short port = 0;
 	int fd;
 	assert(listen_session->epoll_thread == connection->epoll_thread);
 	fd = accept(connection->fd, (struct sockaddr*)&peer_addr, &addr_len);
@@ -56,6 +60,8 @@ static void listen_session_accept(struct connection_t *connection)
 	}
 	connection_read_enable(connection, listen_session_accept);
 	socket_non_block(fd);
-	LOG(LOG_INFO, "%s accept %s fd=%d\n", epoll_thread->name, sockaddr_to_string(&peer_addr, ip_str, sizeof(ip_str)), fd);
+	sockaddr_string(&peer_addr, ip_str, sizeof(ip_str));
+	port = sockaddr_port(&peer_addr);
+	LOG(LOG_INFO, "%s accept %s:%d fd=%d\n", epoll_thread->name, ip_str, port, fd);
 	http_session_create(epoll_thread, fd);
 }

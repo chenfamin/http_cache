@@ -917,18 +917,25 @@ void fifo_clean(struct fifo_t *fifo)
 	http_free(fifo->data);
 }
 
-const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size)
+const char* sockaddr_string(struct sockaddr *addr, char *str, int size)
+{
+	if (addr->sa_family == AF_INET) {
+		inet_ntop(addr->sa_family, &((struct sockaddr_in *)addr)->sin_addr, str, size);
+	} else if (addr->sa_family == AF_INET6) {
+		inet_ntop(addr->sa_family, &((struct sockaddr_in6 *)addr)->sin6_addr, str, size);
+	}
+	return str;
+}
+
+unsigned short sockaddr_port(struct sockaddr *addr)
 {
 	unsigned short port = 0;
 	if (addr->sa_family == AF_INET) {
 		port = ntohs(((struct sockaddr_in *)addr)->sin_port);
-		inet_ntop(addr->sa_family, &((struct sockaddr_in *)addr)->sin_addr, str, size);
 	} else if (addr->sa_family == AF_INET6) {
 		port = ntohs(((struct sockaddr_in6 *)addr)->sin6_port);
-		inet_ntop(addr->sa_family, &((struct sockaddr_in6 *)addr)->sin6_addr, str, size);
 	}
-	sprintf(str + strlen(str), ":%d", port);
-	return str;
+	return port;
 }
 
 int socket_listen(const char *host, unsigned short port, int family)

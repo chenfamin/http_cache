@@ -152,7 +152,8 @@ void *fifo_head(struct fifo_t *fifo);
 void *fifo_tail(struct fifo_t *fifo);
 void fifo_clean(struct fifo_t *fifo);
 
-const char* sockaddr_to_string(struct sockaddr *addr, char *str, int size);
+const char* sockaddr_string(struct sockaddr *addr, char *str, int size);
+unsigned short sockaddr_port(struct sockaddr *addr);
 int socket_listen(const char *host, unsigned short port, int family);
 int socket_non_block(int fd);
 
