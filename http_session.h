@@ -7,6 +7,18 @@
 #include "http_aio.h"
 #include "http_dns.h"
 
+enum {
+	ERROR_NONE,
+	ERROR_DNS,
+	ERROR_SOCKET,
+	ERROR_CONNECT,
+	ERROR_READ,
+	ERROR_WRITE,
+	ERROR_PARSE,
+	ERROR_RANGE,
+	ERROR_ABORT,
+};
+
 struct http_request_t {
 	enum http_method method;
 	int http_major;
@@ -25,7 +37,6 @@ struct http_reply_t {
 	struct http_header_t header;
 	int chunked;
 	int64_t content_length;
-	int64_t body_length;// body_length == content_length or body_length == chunk_length
 	enum parser_header_state parse_state;
 };
 
@@ -68,11 +79,11 @@ enum {
 };
 
 struct cache_client_t {
-	struct cache_t *cache;
 	void *http_session;
-	int bitmap_flush;
+	struct cache_t *cache;
 	struct fifo_t body_fifo;
 
+	int bitmap_flush;
 	int64_t body_pos;
 	size_t bitmap_pos;
 
