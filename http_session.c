@@ -1186,11 +1186,6 @@ static void http_server_header_read(struct connection_t *connection)
 	}
 	if (http_session->body_low == 0 && http_session->body_high == 0 && fifo_len(&http_session->body_fifo) == 0) { //alloc buffer when first reply
 		http_session->body_low = http_session->body_high = http_server->body_offset;
-		if (http_client) {
-			assert(string_strlen(&http_client->reply_header) == 0);
-			http_client_build_reply(http_session, http_reply);
-			connection_write_enable(http_client->connection, http_client_header_write);
-		}
 		buffer = buffer_alloc(PAGE_SIZE);
 		buffer->size = PAGE_SIZE - http_session->body_low % PAGE_SIZE;
 		fifo_push_tail(&http_session->body_fifo, buffer);
@@ -1200,6 +1195,10 @@ static void http_server_header_read(struct connection_t *connection)
 				http_session->epoll_thread->name, string_buf(&http_request->url), connection->fd, http_session->body_high, http_server->body_offset);
 		http_server_close(http_session, ERROR_RANGE);
 		return;
+	}
+	if (http_client && string_strlen(&http_client->reply_header) == 0) {
+		http_client_build_reply(http_session, http_reply);
+		connection_write_enable(http_client->connection, http_client_header_write);
 	}
 	if (cache_client) {
 		if (http_reply_cacheable(http_reply)) {
@@ -1214,6 +1213,7 @@ static void http_server_header_read(struct connection_t *connection)
 		if (http_reply->chunked) {
 			http_server_parse_chunk(http_session, buf + nparse, nread - nparse);
 		}
+		http_session_body_write(http_session);
 	}
 	http_server_body_read(connection);
 }
@@ -1314,14 +1314,15 @@ static void http_server_cache_flush(struct http_session_t *http_session)
 	if (cache_file == NULL) {
 		return;
 	}
-	cache_client->bitmap_flush = 1;
-	body_length = cache_file->http_reply->content_length;
-	if (cache_file->http_reply->chunked) {
+	if (cache_file->http_reply->content_length >= 0) {
+		body_length = cache_file->http_reply->content_length;
+		cache_client->bitmap_flush = 1;
+	} else {
 		if (http_server->body_offset_expect < INT64_MAX) {
 			body_length = http_server->body_offset_expect;
 		} else {
 			LOG(LOG_DEBUG, "%s %s chunk don't end\n", cache_client->aio.epoll_thread->name, cache->url);
-			cache_client->bitmap_flush = -1;
+			cache_client->abort = 1;
 		}
 	}
 	LOG(LOG_DEBUG, "%s %s body_length=%"PRId64"\n", cache_client->aio.epoll_thread->name, cache->url, body_length);
@@ -1715,8 +1716,7 @@ static void cache_client_header_build(struct cache_client_t *cache_client, struc
 	string_strcat_printf(&string, "HTTP/%d.%d %s\r\n", 
 			http_reply->http_major, http_reply->http_minor, http_status_reasons_get(http_reply->status_code));
 	list_for_each_entry(header_entry, &http_reply->header.header_list, header_entry_node) {
-		if (strcasecmp("Content-Length", string_buf(&header_entry->field_string)) == 0 ||
-				strcasecmp("Content-Range", string_buf(&header_entry->field_string)) == 0) {
+		if (strcasecmp("Content-Range", string_buf(&header_entry->field_string)) == 0) {
 			continue;
 		}
 		string_strcat(&string, string_buf(&header_entry->field_string));
@@ -1893,20 +1893,18 @@ static void cache_client_do_write(struct cache_client_t *cache_client)
 		cache_client->aio.offset = cache_client->body_pos + cache_file->header_size + cache_file->bitmap_size;
 		aio_summit(&cache_client->aio, aio_writev, cache_client_body_write_done);
 	} else if (cache_client->bitmap_flush) {
-		if (cache_client->bitmap_flush == 1) {
-			cache_client->bitmap_flush = 0;
-			cache_client->aio.offset = cache_file->header_size;
-			aio->iovec[0].buffer = NULL;
-			aio->iovec[0].buf = cache_file->bitmap;
-			aio->iovec[0].buf_size = cache_file->bitmap_size;
-			aio->iovec[0].buf_len = 0;
-			aio->iovec_len = 1;
-			LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_size=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_file->bitmap_size);
-			aio_summit(&cache_client->aio, aio_writev, cache_client_bitmap_write_done);
-		} else {
-			LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_flush=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_client->bitmap_flush);
-			cache_client_close(cache_client, 1);
-		}
+		assert(cache_file->bitmap);
+		cache_client->aio.offset = cache_file->header_size;
+		aio->iovec[0].buffer = NULL;
+		aio->iovec[0].buf = cache_file->bitmap;
+		aio->iovec[0].buf_size = cache_file->bitmap_size;
+		aio->iovec[0].buf_len = 0;
+		aio->iovec_len = 1;
+		LOG(LOG_DEBUG, "%s %s %s fd=%d bitmap_size=%d\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd, cache_file->bitmap_size);
+		aio_summit(&cache_client->aio, aio_writev, cache_client_bitmap_write_done);
+	} else if (cache_client->abort) {
+		LOG(LOG_DEBUG, "%s %s %s fd=%d write abort\n", cache_client->aio.epoll_thread->name, cache->url, cache_file->path, cache_client->aio.fd);
+		cache_client_close(cache_client, 1);
 	} else if (cache_client->http_session == NULL) {
 		cache_client_close(cache_client, 0);
 	} else {
@@ -1966,16 +1964,18 @@ static void cache_client_bitmap_update(struct cache_client_t *cache_client)
 	struct http_reply_t *http_reply = cache_file->http_reply;
 	size_t byte_pos;
 	size_t bit_pos;
-	if (http_reply->content_length >= 0) {
-		while (cache_client->body_pos - cache_client->bitmap_pos >= cache_file->bitmap_bit_size) {
-			bit_pos = cache_client->bitmap_pos / cache_file->bitmap_bit_size;
-			byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
-			assert(byte_pos < cache_file->bitmap_size);
-			cache_file->bitmap[byte_pos] |= (1 << (bit_pos & 0x7));
-			cache_client->bitmap_pos += cache_file->bitmap_bit_size;
-		}
+	if (cache_file->bitmap == NULL) {
+		return;
 	}
-	if (cache_client->body_pos == http_reply->content_length) {
+	assert(http_reply->content_length >= 0);
+	while (cache_client->body_pos - cache_client->bitmap_pos >= cache_file->bitmap_bit_size) {
+		bit_pos = cache_client->bitmap_pos / cache_file->bitmap_bit_size;
+		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
+		assert(byte_pos < cache_file->bitmap_size);
+		cache_file->bitmap[byte_pos] |= (1 << (bit_pos & 0x7));
+		cache_client->bitmap_pos += cache_file->bitmap_bit_size;
+	}
+	if (cache_client->body_pos >= http_reply->content_length) {
 		byte_pos = cache_client->bitmap_pos / cache_file->bitmap_byte_size;
 		cache_file->bitmap[byte_pos] = 0xff;
 		cache_client->bitmap_pos = http_reply->content_length;
@@ -1990,6 +1990,7 @@ static void cache_client_bitmap_write_done(struct aio_t *aio)
 	size_t buf_size = aio->iovec[0].buf_size;
 	size_t buf_len = aio->iovec[0].buf_len;
 	assert(buf_size == cache_file->bitmap_size);
+	cache_client->bitmap_flush = 0;
 	if (buf_len < cache_file->bitmap_size) {
 		LOG(LOG_ERROR, "%s %s %s fd=%d bitmap_size=%d nwrite=%d\n",
 				cache_client->aio.epoll_thread->name, cache->url, cache_file->path, aio->fd, cache_file->bitmap_size, buf_len);
@@ -2082,6 +2083,7 @@ static int cache_client_body_read(struct cache_client_t *cache_client, int64_t s
 	struct cache_t *cache = cache_client->cache;
 	struct aio_t *aio = &cache_client->aio;
 	struct cache_file_t *cache_file = cache->cache_file;
+	struct http_reply_t *http_reply = cache_file->http_reply;
 	struct buffer_t *buffer = NULL;
 	size_t buffer_size = 0;
 	size_t byte_pos = 0;
@@ -2091,7 +2093,8 @@ static int cache_client_body_read(struct cache_client_t *cache_client, int64_t s
 	if (check_size + start > end) {
 		check_size = end - start;
 	}
-	if (cache_file->http_reply->content_length >= 0) {
+	if (cache_file->bitmap) {
+		assert(http_reply->content_length >= 0);
 		while (hit_size < check_size) {
 			byte_pos = (start + hit_size) / cache_file->bitmap_byte_size;
 			bit_pos = (start + hit_size) / cache_file->bitmap_bit_size;
@@ -2100,8 +2103,8 @@ static int cache_client_body_read(struct cache_client_t *cache_client, int64_t s
 			}
 			hit_size = (bit_pos + 1) * cache_file->bitmap_bit_size - start;
 		}
-		if (hit_size + start > cache_file->http_reply->content_length) {
-			hit_size = cache_file->http_reply->content_length - start;
+		if (hit_size + start > http_reply->content_length) {
+			hit_size = http_reply->content_length - start;
 		}
 	} else {
 		hit_size = check_size;
@@ -2337,11 +2340,9 @@ static void cache_file_bitmap_init(struct cache_file_t *cache_file, size_t block
 	cache_file->bitmap_byte_size = cache_file->bitmap_bit_size * 8;
 	if (http_reply->content_length > 0 && cache_file->bitmap_byte_size > 0) {
 		cache_file->bitmap_size = (http_reply->content_length + cache_file->bitmap_byte_size - 1) / cache_file->bitmap_byte_size;
-	} else {
-		cache_file->bitmap_size = 1;
+		cache_file->bitmap = http_malloc(cache_file->bitmap_size);
+		memset(cache_file->bitmap, 0, cache_file->bitmap_size);
 	}
-	cache_file->bitmap = http_malloc(cache_file->bitmap_size);
-	memset(cache_file->bitmap, 0, cache_file->bitmap_size);
 }
 
 static struct cache_t* cache_alloc()

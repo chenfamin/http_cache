@@ -83,6 +83,7 @@ struct cache_client_t {
 	struct cache_t *cache;
 	struct fifo_t body_fifo;
 
+	int abort;
 	int bitmap_flush;
 	int64_t body_pos;
 	size_t bitmap_pos;
